@@ -1,0 +1,7 @@
+.godot/
+
+docs/
+
+build/
+*.exe
+*.pck
