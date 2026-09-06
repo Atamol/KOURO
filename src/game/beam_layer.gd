@@ -6,6 +6,10 @@ extends Node2D
 var segments: Array = []
 var exits: Array = []
 var reveal_t := 0.0
+## whether the board is one whose answer turns on how much light got where. Only
+## the exit marks carry it: along the path every leg is drawn the same, or a beam
+## reads as several
+var reads_light := false
 
 
 func _init() -> void:
@@ -14,9 +18,14 @@ func _init() -> void:
 	material = m
 
 
-func show_path(p_segments: Array, p_exits: Array) -> void:
+func _ready() -> void:
+	add_child(Glow.env())
+
+
+func show_path(p_segments: Array, p_exits: Array, p_reads_light := false) -> void:
 	segments = p_segments
 	exits = p_exits
+	reads_light = p_reads_light
 	reveal_t = 0.0
 	queue_redraw()
 
@@ -39,11 +48,9 @@ func _draw() -> void:
 			continue
 		var frac: float = 1.0 if seg.t1 <= reveal_t else (reveal_t - seg.t0) / (seg.t1 - seg.t0)
 		var b: Vector2 = seg.a.lerp(seg.b, frac)
-		var i: float = seg.intensity
-		var glow := Color(0.30, 0.90, 0.45, 0.10 + 0.20 * i)
-		var core := Color(0.45, 1.00, 0.55, clampf(0.25 + 0.75 * i, 0.0, 1.0))
-		draw_line(seg.a, b, glow, 7.0 + 6.0 * sqrt(i), true)
-		draw_line(seg.a, b, core, 1.5 + 2.5 * sqrt(i), true)
+		FieldDraw.beam(self, seg.a, b)
 	for e in exits:
 		if e.time <= reveal_t:
-			draw_circle(e.point, 5.0 + 7.0 * sqrt(e.intensity), Color(0.5, 1.0, 0.6, 0.35 + 0.4 * e.intensity))
+			var lit: float = e.intensity if reads_light else 1.0
+			var spot := Color(0.5, 1.0, 0.6, 0.35 + 0.4 * lit)
+			draw_circle(e.point, 3.5 + 4.5 * sqrt(lit), Glow.hot(spot, lit))

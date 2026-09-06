@@ -6,8 +6,8 @@ const LABEL_SIZE := 13
 const LABEL_PAD := Vector2(6, 3)
 const TEXT_COL := Color(0.78, 0.84, 0.95, 0.85)
 const BOX_COL := Color(0.05, 0.065, 0.10, 0.86)
-## a sheet has no refractive index to look up, so it carries its own entry
-const SHEET := {"label": "偏光板", "color": Color(0.72, 0.76, 0.99)}
+## a sheet has no material to look a colour up from, so it carries its own
+const SHEET := {"color": Color(0.72, 0.76, 0.99)}
 
 
 static func field(ci: CanvasItem) -> void:
@@ -57,9 +57,15 @@ static func shape(ci: CanvasItem, obj: SceneObj, highlight := false, bad := fals
 static func source(ci: CanvasItem, p: Vector2, d: Vector2, hint_len: float) -> void:
 	var perp := Vector2(-d.y, d.x)
 	var pts := PackedVector2Array([p + d * 16.0, p - d * 6.0 + perp * 9.0, p - d * 6.0 - perp * 9.0])
-	ci.draw_colored_polygon(pts, Color(0.55, 1.0, 0.65))
+	ci.draw_colored_polygon(pts, Glow.hot(Color(0.55, 1.0, 0.65)))
 	if hint_len > 18.0:
 		ci.draw_line(p + d * 16.0, p + d * hint_len, Color(0.55, 1.0, 0.65, 0.5), 2.0, true)
+
+
+## Every stretch of beam goes through here, so the piece the player is given and
+## the answer path cannot come out looking like different light
+static func beam(ci: CanvasItem, a: Vector2, b: Vector2) -> void:
+	ci.draw_line(a, b, Glow.hot(Color(0.45, 1.00, 0.55)), 4.0, true)
 
 
 ## Ticks lie along the bar when the axis is in the plane of the board and across
@@ -117,17 +123,18 @@ static func _outline(ci: CanvasItem, obj: SceneObj, col: Color) -> void:
 
 static func _text_of(obj: SceneObj) -> String:
 	var info := _info(obj)
+	var name := Lang.t("shape.polarizer") if obj.is_polarizer() else OpticsMaterials.label_of(obj.mat_key)
 	if obj is PolarizerObj:
-		return "%s φ=%d°" % [info.label, roundi(rad_to_deg((obj as PolarizerObj).phi))]
+		return "%s φ=%d°" % [name, roundi(rad_to_deg((obj as PolarizerObj).phi))]
 	if obj.is_reflector():
-		return info.label
+		return name
 	if obj is GradientBody:
-		return "%s n=%.3f±%.3f" % [info.label, info.n, (obj as GradientBody).swing()]
+		return "%s n=%.3f±%.3f" % [name, info.n, (obj as GradientBody).swing()]
 	if info.has("ne"):
-		return "%s no=%.3f ne=%.3f" % [info.label, info.n, info.ne]
+		return "%s no=%.3f ne=%.3f" % [name, info.n, info.ne]
 	if info.has("rotation"):
-		return "%s n=%.3f 旋光 %+.2f°/mm" % [info.label, info.n, info.rotation]
-	return "%s n=%.3f" % [info.label, info.n]
+		return "%s n=%.3f %s %+.2f°/mm" % [name, info.n, Lang.t("draw.rotation"), info.rotation]
+	return "%s n=%.3f" % [name, info.n]
 
 
 ## Two bodies on top of each other would print their warnings in the same place,
