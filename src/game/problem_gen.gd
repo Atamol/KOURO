@@ -11,83 +11,178 @@ const GAP := 18.0
 ## needs a gap rather than a tangency
 const TOUCH_CLEAR := 3.0
 # placing bodies costs far more than tracing, so reuse one layout for many shots
-const PLACEMENT_TRIES := 110
+const PLACEMENT_TRIES := 200
 const SOURCE_TRIES := 45
 # markers are 42 px wide, and two exits a corner apart can be far along the
 # border yet touch on screen
 const MARKER_CLEAR := 58.0
+## how often the shot is worked back from two bodies rather than aimed at one.
+## _threaded_source gives up often enough that the rest still lands here
+const THREADED_SHARE := 0.85
+## the aim error a board has to survive. Nobody reads a surface to better than
+## this, so an answer that moves under it was never really being read
+const SHAKE := deg_to_rad(0.5)
+## how bright the first beam that is not an answer may be against the dimmest
+## one that is. Ranking beams by eye is guesswork, so the gap has to be plain
+const RUNNER_UP := 0.6
 
 
 static func generate(level: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
-	var min_clear: float = level.get("min_clear", 0.0)
-	var opts := {"fresnel": level.fresnel, "min_intensity": 0.02, "max_events": 96, "clear": min_clear > 0.0}
+	var fixed := prepare(level)
 	for _placement in PLACEMENT_TRIES:
-		var objects := _place_objects(level, rng)
-		if objects.is_empty():
-			continue
-		# aimed at what the level is about, not at whatever the draw landed on
-		var key_bodies := _key_bodies(objects, level)
-		for _shot in SOURCE_TRIES:
-			var src := _make_source(rng, objects, key_bodies)
-			var result := RayTracer.trace(objects, FIELD, src.p, src.d, opts)
-			if not result.ok:
-				continue
-			var answers: int = level.answers
-			if result.exits.size() < answers:
-				continue
-			var win: Dictionary = result.exits[0]
-			if win.events < level.min_events:
-				continue
-			# a path that clips a corner or skims a body it never meets is read off
-			# pixels rather than physics
-			if min_clear > 0.0 and _too_marginal(result.exits, level.answers, min_clear):
-				continue
-			# the boundary between what counts as an answer and what does not has
-			# to be obvious, otherwise picking is a coin toss
-			if result.exits.size() > answers and result.exits[answers].intensity > result.exits[answers - 1].intensity * 0.8:
-				continue
-			# and every answer has to be a beam you can see
-			if answers > 1 and result.exits[answers - 1].intensity < win.intensity * 0.35:
-				continue
-			if level.require_crystal and not _path_has_crystal(win.touched, objects):
-				continue
-			# a crystal on the path is not enough for a two point answer: the two
-			# answers have to be the polarizations it parted
-			if level.get("require_split", false) and not _split_by_crystal(result.exits, answers):
-				continue
-			if level.get("require_rotary", false) and not _path_has_rotary(win.touched, objects):
-				continue
-			# distinct bodies on the winning path, so extra objects are not just scenery
-			if RayTracer.count_objects(win.touched) < level.min_objects:
-				continue
-			if win.tir < level.min_tir or win.split < level.get("min_split", 0):
-				continue
-			if _path_sheets(win.touched, objects) < level.get("min_sheets", 0):
-				continue
-			# the level's new element has to be on the answer path, not just on screen
-			if not _path_has_kinds(win.touched, objects, level.require_kinds):
-				continue
-			# the straight continuation of the source must not land on the answer,
-			# otherwise the problem is solvable without any optics
-			var straight := Isect.ray_rect_exit(src.p + src.d * 1e-3, src.d, FIELD)
-			if straight.is_empty() or win.point.distance_to(straight.point) < level.min_deviation:
-				continue
-			if win.point.distance_to(src.p) < 120.0:
-				continue
-			var wins: Array = []
-			for i in answers:
-				wins.append(result.exits[i].point)
-			if not _gimmicks_bite(objects, src, wins, level):
-				continue
-			var choices := _make_choices(wins, result.exits, src, level, objects, rng)
-			if choices.is_empty():
-				continue
-			return {
-				"objects": _drop_dark(objects, result.exits, choices.lit), "source": src, "trace": result,
-				"choices": choices.points, "correct": choices.correct,
-			}
+		var made := attempt(level, rng, fixed)
+		if not made.is_empty():
+			return made
 	return {}
 
+
+## The parts of a level that never change between attempts, so a search that is
+## stopped and picked up again does not work them out over and over
+static func prepare(level: Dictionary) -> Dictionary:
+	var edge := _edges(level)
+	var opts := {"fresnel": level.fresnel, "min_intensity": 0.02, "max_events": 96}
+	var measured := opts.duplicate()
+	measured.clear = true
+	return {"edge": edge, "picky": edge.values().max() > 0.0, "opts": opts, "measured": measured}
+
+
+## One layout to shoot at, or nothing when the draw could not place the bodies
+static func lay_out(level: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
+	var objects := _place_objects(level, rng)
+	if objects.is_empty():
+		return {}
+	# aimed at what the level is about, not at whatever the draw landed on
+	return {"objects": objects, "key_bodies": _key_bodies(objects, level)}
+
+
+## One shot at a laid out board, which is the finest grain the search can be
+## stopped on. It draws exactly what one round of the loop used to, so a seed
+## still names the same board
+static func shoot(level: Dictionary, rng: RandomNumberGenerator, fixed: Dictionary, layout: Dictionary) -> Dictionary:
+	var edge: Dictionary = fixed.edge
+	var picky: bool = fixed.picky
+	var opts: Dictionary = fixed.opts
+	var measured: Dictionary = fixed.measured
+	var objects: Array = layout.objects
+	var key_bodies: Array = layout.key_bodies
+	var src := _make_source(rng, objects, key_bodies)
+	var result := RayTracer.trace(objects, FIELD, src.p, src.d, opts)
+	if not result.ok:
+		return {}
+	var answers: int = level.answers
+	if result.exits.size() < answers:
+		return {}
+	var win: Dictionary = result.exits[0]
+	if win.events < level.min_events:
+		return {}
+	# the boundary between what counts as an answer and what does not has
+	# to be obvious, otherwise picking is a coin toss
+	if result.exits.size() > answers and result.exits[answers].intensity > result.exits[answers - 1].intensity * RUNNER_UP:
+		return {}
+	# and every answer has to be a beam you can see
+	if answers > 1 and result.exits[answers - 1].intensity < win.intensity * 0.35:
+		return {}
+	if level.require_crystal and not _path_has_crystal(win.touched, objects):
+		return {}
+	# a crystal on the path is not enough for a two point answer: the two
+	# answers have to be the polarizations it parted
+	if level.get("require_split", false) and not _split_by_crystal(result.exits, answers):
+		return {}
+	# distinct bodies on the winning path, so extra objects are not just scenery
+	if RayTracer.count_objects(win.touched) < level.min_objects:
+		return {}
+	if win.tir < level.min_tir:
+		return {}
+	# an element must not turn up before the level that teaches it. Left open,
+	# total reflection was landing on a third of the boards five levels early
+	if win.tir > level.get("max_tir", 99):
+		return {}
+	# how many of a shape the path has to meet, where require_kinds only asks for
+	# one. Two mirrors or two prisms in a row is a different reading from one
+	for kind: String in level.get("min_on_path", {}):
+		if _path_kinds(win.touched, objects, kind) < int(level.min_on_path[kind]):
+			return {}
+	# the level's new element has to be on the answer path, not just on screen
+	if not _path_has_kinds(win.touched, objects, level.require_kinds):
+		return {}
+	# the straight continuation of the source must not land on the answer,
+	# otherwise the problem is solvable without any optics
+	var straight := Isect.ray_rect_exit(src.p + src.d * 1e-3, src.d, FIELD)
+	if straight.is_empty() or win.point.distance_to(straight.point) < level.min_deviation:
+		return {}
+	if win.point.distance_to(src.p) < 120.0:
+		return {}
+	# a path that clips a corner, skims a body it never meets, or meets one
+	# almost edge on is read off pixels rather than physics. Measuring that
+	# walks every body on every leg, so it waits until the path is otherwise
+	# worth keeping
+	if picky:
+		result = RayTracer.trace(objects, FIELD, src.p, src.d, measured)
+		if _too_marginal(result.exits, level.answers, edge):
+			return {}
+	var wins: Array = []
+	for i in answers:
+		wins.append(result.exits[i].point)
+	# an answer that half a degree at the source lands on another marker is
+	# one a player can read correctly and still get wrong
+	if not _steady(objects, src, wins, opts, level.get("max_shake", 0.0)):
+		return {}
+	if not _gimmicks_bite(objects, src, wins, level):
+		return {}
+	if not _polarization_bites(objects, src, wins, level):
+		return {}
+	var choices := _make_choices(wins, result.exits, src, level, objects, rng)
+	if choices.is_empty():
+		return {}
+	return {
+		"objects": _drop_dark(objects, result.exits, choices.lit), "source": src, "trace": result,
+		"choices": choices.points, "correct": choices.correct,
+		"reads_light": _reads_light(objects, win.touched, wins),
+	}
+
+
+## Polarization on the board has to be the reason the answer is where it is,
+## or it is scenery and the board reads the same to someone who never noticed it.
+##
+## Asked of the whole board rather than of the answer's own path, because the
+## sharpest thing a sheet can do is stop the beam a player was following, and a
+## beam that dies never reaches the border to say it met one
+static func _polarization_bites(objects: Array, src: Dictionary, wins: Array, level: Dictionary) -> bool:
+	if not _has_polarization(objects):
+		return true
+	var blind := RayTracer.trace(objects, FIELD, src.p, src.d,
+			{"fresnel": level.fresnel, "min_intensity": 0.02, "max_events": 96, "mistake": "no_polarization"})
+	return not blind.ok or _min_point_dist(blind.exits[0].point, wins) >= level.decoy_clear
+
+
+static func _has_polarization(objects: Array) -> bool:
+	for o: SceneObj in objects:
+		if o.is_polarizer() or OpticsMaterials.is_rotary(o.mat_key):
+			return true
+	return false
+
+
+static func _reads_polarization(objects: Array, touched: int) -> bool:
+	return _path_sheets(touched, objects) > 0 or _path_has_rotary(touched, objects)
+
+
+## Whether answering takes reading how much light got where. A crystal parts the
+## beam and both halves are asked for, and polarization on the path has already
+## had to earn its place. On every other board the light merely gets dimmer as
+## it goes, which nobody is asked to read, so it is not drawn
+static func _reads_light(objects: Array, touched: int, wins: Array) -> bool:
+	return wins.size() > 1 or _reads_polarization(objects, touched)
+
+
+static func attempt(level: Dictionary, rng: RandomNumberGenerator, fixed: Dictionary) -> Dictionary:
+	var layout := lay_out(level, rng)
+	if layout.is_empty():
+		return {}
+	for _shot in SOURCE_TRIES:
+		var made := shoot(level, rng, fixed, layout)
+		if not made.is_empty():
+			return made
+	return {}
 
 ## Drops bodies no reading of the board ever sends light near, since all they do
 ## is clutter it. A dropped body was never hit, but the exits index into the
@@ -106,11 +201,51 @@ static func _drop_dark(objects: Array, exits: Array, lit: int) -> Array:
 	return kept
 
 
-static func _too_marginal(exits: Array, answers: int, limit: float) -> bool:
+## The ways a board can come down to eyesight rather than to optics: a hit that
+## lands on a corner, a first hit that may or may not happen at all, a beam that
+## skims a body it never meets, a mirror taken nearly edge on, and a sheet met so
+## far off its normal that its angle stops meaning what it says
+static func _edges(level: Dictionary) -> Dictionary:
+	return {
+		"clear": level.get("min_clear", 0.0),
+		"entry": level.get("min_entry", 0.0),
+		"near": level.get("min_near", 0.0),
+		"cos": level.get("min_cos", 0.0),
+		"sheet": level.get("min_sheet", 0.0),
+	}
+
+
+static func _too_marginal(exits: Array, answers: int, edge: Dictionary) -> bool:
 	for i in mini(answers, exits.size()):
-		if exits[i].get("clear", INF) < limit:
+		var e: Dictionary = exits[i]
+		if e.get("clear", INF) < edge.clear or e.get("entry", INF) < edge.entry:
+			return true
+		if e.get("near", INF) < edge.near or e.get("graze", 1.0) < edge.cos:
+			return true
+		# a sheet read off its angle
+		if e.get("sheet", 1.0) < edge.sheet:
 			return true
 	return false
+
+
+## Nudges the shot both ways and asks whether the answer stayed put. Every other
+## test looks at one moment of the path; this one asks whether the whole chain
+## amplified, which is what a long path through a gradient or a near critical
+## surface does
+static func _steady(objects: Array, src: Dictionary, wins: Array, opts: Dictionary, limit: float) -> bool:
+	if limit <= 0.0:
+		return true
+	for turn: float in [-SHAKE, SHAKE]:
+		var shaken := RayTracer.trace(objects, FIELD, src.p, (src.d as Vector2).rotated(turn), opts)
+		if not shaken.ok or shaken.exits.size() < wins.size():
+			return false
+		var moved: Array = []
+		for i in wins.size():
+			moved.append(shaken.exits[i].point)
+		for w: Vector2 in wins:
+			if _min_point_dist(w, moved) > limit:
+				return false
+	return true
 
 
 ## Each named mistake has to send the light somewhere clearly else. Without
@@ -126,37 +261,109 @@ static func _gimmicks_bite(objects: Array, src: Dictionary, wins: Array, level: 
 
 
 static func _place_objects(level: Dictionary, rng: RandomNumberGenerator) -> Array:
+	level = _drawable(level)
 	var objects: Array = []
 	# required shapes go down first, otherwise a layout can lack the one kind
 	# every source shot is then tested against
 	var wanted: Array = level.require_kinds.duplicate()
 	wanted.append_array(level.get("place_kinds", []))
 	var count: int = maxi(rng.randi_range(level.objects_min, level.objects_max), wanted.size())
+	var lane := _lane(level, rng)
+	var laid := 0
 	for i in count:
 		var kind: String = wanted[i] if i < wanted.size() else _pick(level.kinds, rng)
 		for _try in 50:
-			var obj := _make_object(kind, level, rng)
+			var obj: SceneObj = null
+			# the last tries go back to a free draw, so a lane that cannot be filled
+			# does not cost the whole layout
+			if kind == "polarizer" and not lane.is_empty() and _try < 35:
+				obj = _lane_sheet(lane, laid, rng)
+			else:
+				obj = _make_object(kind, level, rng)
 			if fits(obj, objects):
 				objects.append(obj)
+				if kind == "polarizer":
+					laid += 1
 				break
 	# a material the level is about is far too easy to miss when the draw is
 	# uniform, so the ones that carry a gimmick are placed outright
 	for pool: String in ["crystal", "rotary"]:
 		for _n in level.get("place_" + pool, 0):
-			for _try in 50:
-				var obj := _make_special(pool, level, rng)
+			for _try in 60:
+				var obj := _make_special(pool, level, rng, _between_bars(objects, rng) if _try < 40 else Vector2.INF)
 				if fits(obj, objects):
 					objects.append(obj)
 					break
-	var step: float = level.get("sheet_step", 0.0)
-	if step > 0.0:
-		_step_sheets(objects, step)
+	# a step of zero is a level that wants its sheets parallel, which is not the
+	# same as a level that never asked, so the key has to be present rather than
+	# nonzero
+	if level.has("sheet_step"):
+		_step_sheets(objects, level.sheet_step)
+	if level.has("mirror_step") and not _step_mirrors(objects, level.mirror_step):
+		return []
 	return objects
 
 
-## Fans the sheets out from the first. Axes left to chance are rarely near enough
-## to crossed to stop anything, and at 45 degrees three sheets come out 0, 45, 90:
-## the ends are crossed, so the only way through goes by way of the middle
+## A crystal parts the beam wherever it sits, which is a different question with
+## a different number of answers, so the levels that are not about it never draw
+## one rather than throwing the board away once the split shows up. Sheets and
+## rotary bodies are kept out the same way, since drawn at random neither can
+## reach the answer and every board holding one would be thrown away again
+static func _drawable(level: Dictionary) -> Dictionary:
+	var out := level
+	if not _places(level, "polarizer") and (level.kinds as Array).has("polarizer"):
+		out = out.duplicate()
+		out.kinds = (level.kinds as Array).filter(func(k): return k != "polarizer")
+	var keep_crystal: bool = level.require_crystal or level.get("place_crystal", 0) > 0
+	var keep_rotary: bool = level.get("place_rotary", 0) > 0
+	var plain: Array = []
+	for key: String in level.materials:
+		if OpticsMaterials.is_crystal(key) and not keep_crystal:
+			continue
+		if OpticsMaterials.is_rotary(key) and not keep_rotary:
+			continue
+		plain.append(key)
+	if plain.is_empty() or plain.size() == (level.materials as Array).size():
+		return out
+	if out == level:
+		out = level.duplicate()
+	out.materials = plain
+	return out
+
+
+static func _places(level: Dictionary, kind: String) -> bool:
+	return (level.require_kinds as Array).has(kind) or (level.get("place_kinds", []) as Array).has(kind)
+
+
+## A line to lay the two sheets and the liquid along, each bar turned across it.
+## Dropped independently they almost never leave one beam a way through all three.
+##
+## Only for the rotation level: a pair whose point is that it stops the light
+## wants them apart, not in a row
+static func _lane(level: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
+	if level.get("place_rotary", 0) < 1:
+		return {}
+	var a := _rand_center(rng, 150.0)
+	var b := _rand_center(rng, 150.0)
+	# a short lane leaves no room to thread. Drawing again until it is long
+	# enough sounds better and is worse: every layout then has its sheets in a
+	# row, and a beam that runs down a row comes out near the line it went in on
+	if a.distance_to(b) < 320.0:
+		return {}
+	return {"a": a, "b": b, "count": 2}
+
+
+static func _lane_sheet(lane: Dictionary, index: int, rng: RandomNumberGenerator) -> SceneObj:
+	var along := (index + 0.5) / float(lane.count) + rng.randf_range(-0.12, 0.12)
+	var at: Vector2 = (lane.a as Vector2).lerp(lane.b, clampf(along, 0.05, 0.95))
+	var across: float = ((lane.b - lane.a) as Vector2).angle() + PI * 0.5 + rng.randf_range(-0.5, 0.5)
+	var reach := rng.randf_range(55.0, 120.0)
+	var phi := PI * 0.25 * rng.randi_range(0, 3)
+	return make_object("polarizer", "polarizer", at, reach, 0.0, across, PolarizerObj.byte_from_phi(phi))
+
+
+## Axes left to chance are rarely near enough to crossed, or to parallel, to do
+## anything the level is asking about
 static func _step_sheets(objects: Array, step: float) -> void:
 	var sheets: Array = []
 	for o: SceneObj in objects:
@@ -166,7 +373,60 @@ static func _step_sheets(objects: Array, step: float) -> void:
 		(sheets[i] as PolarizerObj).phi = fposmod((sheets[0] as PolarizerObj).phi + step * i, PI)
 
 
-static func _make_special(pool: String, level: Dictionary, rng: RandomNumberGenerator) -> SceneObj:
+## The same for mirrors, except that a mirror carries no angle of its own: it is
+## the segment, so the segment is turned about its middle. Turning one moves it,
+## unlike setting a sheet's axis, so a layout that fitted before can come out with
+## two bodies inside each other. Rather than nudge them apart the whole layout
+## goes back, since the tracer cannot read an overlap
+static func _step_mirrors(objects: Array, step: float) -> bool:
+	var mirrors: Array = []
+	for o: SceneObj in objects:
+		if o.kind == "mirror":
+			mirrors.append(o)
+	if mirrors.is_empty():
+		return true
+	var first: MirrorObj = mirrors[0]
+	var base := (first.b - first.a).angle()
+	for i in range(1, mirrors.size()):
+		var m: MirrorObj = mirrors[i]
+		var mid: Vector2 = (m.a + m.b) * 0.5
+		var reach: Vector2 = Vector2.from_angle(base + step * i) * (m.a.distance_to(m.b) * 0.5)
+		m.a = mid - reach
+		m.b = mid + reach
+		if not fits(m, objects.filter(func(o): return o != m)):
+			return false
+	return true
+
+
+static func _path_kinds(touched: int, objects: Array, kind: String) -> int:
+	var n := 0
+	for i in objects.size():
+		if (touched & (1 << i)) != 0 and (objects[i] as SceneObj).kind == kind:
+			n += 1
+	return n
+
+
+## Two sheets stop the beam unless something between them turns its plane, so a
+## rotary body dropped anywhere else is a body the level never gets to use
+static func _between_bars(objects: Array, rng: RandomNumberGenerator) -> Vector2:
+	var bars: Array = []
+	for o: SceneObj in objects:
+		if o.is_polarizer():
+			bars.append((o.bounding() as Dictionary).center)
+	if bars.size() < 2:
+		return Vector2.INF
+	return (bars[0] as Vector2).lerp(bars[1], rng.randf_range(0.35, 0.65))
+
+
+static func _spot(rng: RandomNumberGenerator, at: Vector2, bound_r: float) -> Vector2:
+	var inner := FIELD.grow(-(OBJ_MARGIN + bound_r))
+	if not at.is_finite() or inner.size.x <= 0.0 or inner.size.y <= 0.0:
+		return _rand_center(rng, bound_r)
+	var off := Vector2.from_angle(rng.randf_range(0.0, TAU)) * rng.randf_range(0.0, 36.0)
+	return (at + off).clamp(inner.position, inner.end)
+
+
+static func _make_special(pool: String, level: Dictionary, rng: RandomNumberGenerator, at: Vector2) -> SceneObj:
 	var keys: Array = []
 	for key: String in level.materials:
 		var wanted: bool = OpticsMaterials.is_crystal(key) if pool == "crystal" else OpticsMaterials.is_rotary(key)
@@ -176,14 +436,16 @@ static func _make_special(pool: String, level: Dictionary, rng: RandomNumberGene
 		return null
 	var key: String = _pick(keys, rng)
 	# rotation goes by path length, so these are built large: easier to thread a
-	# beam through and worth more degrees once threaded
+	# beam through and worth more degrees once threaded. Sizing them from the
+	# material instead, so that a crossing turns the plane about a quarter, reads
+	# better on paper and finds a third as many boards
 	if pool == "rotary":
 		if rng.randf() < 0.5:
 			var r := rng.randf_range(68.0, 85.0)
-			return make_object("circle", key, _rand_center(rng, r), r, 0.0, 0.0)
+			return make_object("circle", key, _spot(rng, at, r), r, 0.0, 0.0)
 		var w := rng.randf_range(200.0, 270.0)
 		var h := rng.randf_range(74.0, 100.0)
-		return make_object("slab", key, _rand_center(rng, Vector2(w, h).length() * 0.5), w, h, rng.randf_range(0.0, PI))
+		return make_object("slab", key, _spot(rng, at, Vector2(w, h).length() * 0.5), w, h, rng.randf_range(0.0, PI))
 	var kind: String = ["circle", "slab", "prism"][rng.randi_range(0, 2)]
 	return _make_object(kind, {"materials": [key], "metals": level.metals}, rng)
 
@@ -272,12 +534,11 @@ static func _make_object(kind: String, level: Dictionary, rng: RandomNumberGener
 ## pointed for a level that asks the beam to reach one
 static func _key_bodies(objects: Array, level: Dictionary) -> Array:
 	var kinds: Array = level.require_kinds + level.get("place_kinds", [])
-	var rotary: bool = level.get("require_rotary", false) or level.get("place_rotary", 0) > 0
+	var rotary: bool = level.get("place_rotary", 0) > 0
 	var crystal: bool = level.require_crystal or level.get("place_crystal", 0) > 0
-	var sheets: bool = level.get("min_sheets", 0) > 0
 	var out: Array = []
 	for o: SceneObj in objects:
-		if kinds.has(o.kind) or (sheets and o.is_polarizer()) \
+		if kinds.has(o.kind) \
 				or (rotary and OpticsMaterials.is_rotary(o.mat_key)) \
 				or (crystal and OpticsMaterials.is_crystal(o.mat_key)):
 			out.append(o)
@@ -318,7 +579,7 @@ static func _spot_in(obj: SceneObj, rng: RandomNumberGenerator) -> Vector2:
 
 
 static func _make_source(rng: RandomNumberGenerator, objects: Array, priority: Array = []) -> Dictionary:
-	if objects.size() > 1 and rng.randf() < 0.5:
+	if objects.size() > 1 and rng.randf() < THREADED_SHARE:
 		var threaded := _threaded_source(rng, objects, priority)
 		if not threaded.is_empty():
 			return threaded
@@ -378,7 +639,8 @@ static func build_custom(objects: Array, src: Dictionary, fresnel: bool, choices
 	var picks := _make_choices(wins, result.exits, src, level, objects, rng, MARKER_CLEAR)
 	if picks.is_empty():
 		return {}
-	return {"objects": objects, "source": src, "trace": result, "choices": picks.points, "correct": picks.correct}
+	return {"objects": objects, "source": src, "trace": result, "choices": picks.points, "correct": picks.correct,
+			"reads_light": _reads_light(objects, result.exits[0].touched, wins)}
 
 
 static func _hand_built(objects: Array, src: Dictionary, result: Dictionary, wins: Array, decoys: Array, rng: RandomNumberGenerator) -> Dictionary:
@@ -397,7 +659,8 @@ static func _hand_built(objects: Array, src: Dictionary, result: Dictionary, win
 		shuffled.append(pts[order[i]])
 		if order[i] < wins.size():
 			correct.append(i)
-	return {"objects": objects, "source": src, "trace": result, "choices": shuffled, "correct": correct}
+	return {"objects": objects, "source": src, "trace": result, "choices": shuffled, "correct": correct,
+			"reads_light": _reads_light(objects, result.exits[0].touched, wins)}
 
 
 ## A hand made stage has no level table, so how many points count as answers is
@@ -695,9 +958,6 @@ static func _path_has_crystal(touched: int, objects: Array) -> bool:
 	return false
 
 
-## How many sheets the beam got through. A beam that meets two crossed
-## sheets never reaches a third, so asking for three is the same as asking for
-## the one in between to sit at a workable angle
 static func _path_sheets(touched: int, objects: Array) -> int:
 	var n := 0
 	for i in objects.size():

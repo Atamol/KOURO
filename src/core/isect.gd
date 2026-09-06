@@ -1,7 +1,8 @@
 class_name Isect
 ## Ray intersection helpers. Normals are flipped to face the incoming ray, and
-## `margin` says how near the hit came to missing: distance to the nearer end of
-## the face for a flat one, depth inside the rim for a circle
+## `margin` says how far the ray would have to slide sideways for the hit to
+## come out differently: past the nearer end of the face for a flat one, out
+## through the rim for a circle
 
 
 const EPS := 1e-6
@@ -20,7 +21,10 @@ static func ray_segment(p: Vector2, d: Vector2, a: Vector2, b: Vector2) -> Dicti
 	var normal := Vector2(-ab.y, ab.x).normalized()
 	if normal.dot(d) > 0.0:
 		normal = -normal
-	return {"t": t, "point": p + d * t, "normal": normal, "margin": minf(s, 1.0 - s) * ab.length()}
+	# perpendicular to the ray, not along the face: a beam that comes in almost
+	# along a corner's bisector lands well down the face and still passes within
+	# a pixel or two of the vertex, which is where the other face takes over
+	return {"t": t, "point": p + d * t, "normal": normal, "margin": minf(s, 1.0 - s) * absf(denom)}
 
 
 static func ray_circle(p: Vector2, d: Vector2, c: Vector2, r: float) -> Dictionary:
