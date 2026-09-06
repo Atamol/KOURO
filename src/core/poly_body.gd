@@ -3,7 +3,6 @@ extends SceneObj
 ## Convex polygon body, winding does not matter
 
 
-
 var points: PackedVector2Array
 var _bcenter: Vector2
 var _bradius: float = 0.0

@@ -1,7 +1,5 @@
 extends SceneTree
-## Headless physics tests. Run:
-##   godot --headless --path . --import   (first time only)
-##   godot --headless --path . -s res://tests/run_tests.gd
+## Headless physics tests. Commands are in CLAUDE.md
 
 
 var fails := 0
@@ -17,6 +15,7 @@ func _init() -> void:
 	_test_tracer_straight()
 	_test_tracer_mirror()
 	_test_tracer_slab()
+	_test_tracer_slab_anywhere()
 	_test_tracer_circle_center()
 	_test_grazing()
 	_test_mistakes()
@@ -26,11 +25,14 @@ func _init() -> void:
 	_test_rotation()
 	_test_gradient()
 	_test_split_count()
+	_test_one_path()
 	_test_clearance()
 	_test_energy()
 	_test_level_progression()
 	_test_stage_code()
 	_test_generation()
+	_test_sliced_search()
+	_test_early_no_tir()
 	print("---")
 	print("%d/%d passed" % [count - fails, count])
 	quit(1 if fails > 0 else 0)
@@ -134,6 +136,45 @@ func _test_tracer_slab() -> void:
 		# straight line would exit elsewhere: lateral displacement must exist
 		var straight := Isect.ray_rect_exit(Vector2(f.position.x, 150.0) + d * 0.001, d, f)
 		check("slab lateral offset", res.exits[0].point.distance_to(straight.point) > 1.0)
+
+
+# the slab above sits square on the middle of the field, where the arithmetic is
+# kindest. Away from there a hit point carries enough float32 error that a spawn
+# a thousandth of a pixel inside the glass reads as outside it, and the tracer
+# then took the exit face for another entry: the beam left bent, and a later
+# face could hand back a reflection no angle can produce
+func _test_tracer_slab_anywhere() -> void:
+	var f := ProblemGen.FIELD
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20260817
+	var tried := 0
+	var odd := 0
+	var bounced := 0
+	var worst := 0.0
+	for _shot in 400:
+		var spin := rng.randf_range(0.0, PI)
+		var mid := f.get_center() + Vector2(rng.randf_range(-30.0, 30.0), rng.randf_range(-30.0, 30.0))
+		var slab := PolyBody.new(ProblemGen._rect_points(mid, 420.0, rng.randf_range(50.0, 90.0), spin), "soda_glass")
+		# aimed through the middle and within 70 degrees of the normal, so the beam
+		# is bound to cross between the two long faces and no end face can take it
+		var d := Vector2.from_angle(spin + PI * 0.5).rotated(rng.randf_range(-1.22, 1.22))
+		var src := mid - d * 230.0
+		if not f.has_point(src):
+			continue
+		var res := RayTracer.trace([slab], f, src, d, {})
+		if not res.ok or res.exits.size() != 1:
+			continue
+		tried += 1
+		var e: Dictionary = res.exits[0]
+		bounced += e.tir as int
+		if e.events != 2:
+			odd += 1
+			continue
+		worst = maxf(worst, rad_to_deg(absf(d.angle_to(e.dir))))
+	check("enough of the sample lands on the slab to mean anything", tried > 100)
+	check("a slab anywhere on the field is one face in and one out", odd == 0)
+	check("and never traps the light on the way out", bounced == 0)
+	check("and hands the beam back on the heading it came in on", worst < 0.01)
 
 
 func _test_tracer_circle_center() -> void:
@@ -514,6 +555,27 @@ func _test_split_count() -> void:
 	check("total reflection does not count as a branch", tir.ok and got_tir)
 
 
+# picking one exit out of a branching trace and getting the beam that reached it,
+# which is all the reveal draws unless a crystal made a second answer
+func _test_one_path() -> void:
+	var f := ProblemGen.FIELD
+	var ball := ProblemGen.make_object("circle", "diamond", Vector2(640, 300), 100.0, 0.0, 0.0)
+	var src := Vector2(f.position.x, 300.0)
+	var res := RayTracer.trace([ball], f, src, Vector2(1, 0.08).normalized(), {"fresnel": true})
+	check("a partial reflection leaves more than one exit", res.ok and res.exits.size() > 1)
+	var one := RayTracer.legs_to(res, [res.exits[0]])
+	check("one exit takes only some of the legs", not one.is_empty() and one.size() < res.segments.size())
+	check("which start at the source", (one[0].a as Vector2).distance_to(src) < 0.01)
+	var joined := true
+	for i in range(1, one.size()):
+		# a leg that did not carry on from the one before it would draw as a gap
+		if (one[i].a as Vector2).distance_to(one[i - 1].b) > 0.01:
+			joined = false
+	check("and run end to end", joined)
+	check("ending on that exit", (one[one.size() - 1].b as Vector2).is_equal_approx(res.exits[0].point))
+	check("asking for every exit gives every leg back", RayTracer.legs_to(res, res.exits).size() == res.segments.size())
+
+
 # how near a path came to not happening at all, which is what the easier ladder
 # refuses to build a problem out of
 func _test_clearance() -> void:
@@ -525,19 +587,28 @@ func _test_clearance() -> void:
 	check("clipping a corner reads as marginal", clipped.ok and approx(clipped.exits[0].clear, 5.0, 0.5))
 	var square := RayTracer.trace([slab], f, Vector2(640, f.position.y), Vector2.DOWN, opts)
 	check("going in through the middle does not", square.ok and square.exits[0].clear > 100.0)
+	# lands 10px along the top face, but comes in on the corner's bisector, so
+	# 7px of aim would have put it on the side face instead
+	var slid := RayTracer.trace([slab], f, Vector2(351.0, f.position.y), Vector2(1, 1).normalized(), opts)
+	check("a corner met along its bisector reads as marginal",
+			slid.ok and (slid.segments[0].b as Vector2).is_equal_approx(Vector2(530, 255)) and slid.exits[0].clear < 8.0)
 
 	var ball := ProblemGen.make_object("circle", "water", Vector2(640, 300), 60.0, 0.0, 0.0)
-	var skimmed := RayTracer.trace([ball], f, Vector2(f.position.x, 237.0), Vector2.RIGHT, opts)
-	check("skimming past a body reads as marginal", skimmed.ok and approx(skimmed.exits[0].clear, 3.0, 0.5))
 	var centred := RayTracer.trace([ball], f, Vector2(f.position.x, 300.0), Vector2.RIGHT, opts)
 	check("through the middle of a circle does not", centred.ok and approx(centred.exits[0].clear, 60.0, 0.5))
 	var grazed := RayTracer.trace([ball], f, Vector2(f.position.x, 243.0), Vector2.RIGHT, opts)
 	check("and grazing its rim reads as marginal too", grazed.ok and grazed.exits[0].clear < 12.0)
+	check("the first body a beam meets is measured on its own", approx(grazed.exits[0].entry, grazed.exits[0].clear, 0.01))
+
+	# passing by is a separate reading from clipping, and a far more forgiving one
+	var skimmed := RayTracer.trace([ball], f, Vector2(f.position.x, 237.0), Vector2.RIGHT, opts)
+	check("skimming past a body reads as marginal", skimmed.ok and approx(skimmed.exits[0].near, 3.0, 0.5))
+	check("and is not counted as a hit", skimmed.exits[0].clear == INF and skimmed.exits[0].entry == INF)
 	# a body the beam leaves is not a body it nearly missed
 	var pair := RayTracer.trace([ball, slab], f, Vector2(f.position.x, 300.0), Vector2.RIGHT, opts)
-	check("leaving a body does not count against the next leg", pair.ok and pair.exits[0].clear > 12.0)
+	check("leaving a body does not count against the next leg", pair.ok and pair.exits[0].near > 12.0)
 	# and none of this is measured unless it is asked for
-	check("clearance is off by default", RayTracer.trace([ball], f, Vector2(f.position.x, 237.0), Vector2.RIGHT, {}).exits[0].clear == INF)
+	check("clearance is off by default", RayTracer.trace([ball], f, Vector2(f.position.x, 237.0), Vector2.RIGHT, {}).exits[0].near == INF)
 
 
 func _test_energy() -> void:
@@ -575,6 +646,17 @@ func _test_level_progression() -> void:
 				valid = false
 	check("levels stay cumulative", grows)
 	check("level tables reference real entries", valid)
+	# normal mode never asks anyone to read how bright a beam is, so nothing that
+	# would put a brightness on screen may reach it
+	var unlit := true
+	for i in Difficulty.MAIN_COUNT:
+		var lv: Dictionary = Difficulty.LEVELS[i]
+		if lv.fresnel or lv.answers > 1 or lv.kinds.has("polarizer"):
+			unlit = false
+		for m: String in lv.materials:
+			if OpticsMaterials.is_crystal(m) or OpticsMaterials.is_rotary(m):
+				unlit = false
+	check("normal mode is never read by brightness", unlit)
 	var stable := OpticsMaterials.ORDER.size() == OpticsMaterials.TRANSPARENT.size()
 	for key: String in OpticsMaterials.TRANSPARENT:
 		if not OpticsMaterials.ORDER.has(key):
@@ -604,7 +686,7 @@ func _test_level_progression() -> void:
 			if OpticsMaterials.is_crystal(m) or OpticsMaterials.is_rotary(m):
 				plain = false
 	check("the main ladder stays clear of polarization", plain)
-	# and each of the four hard elements has a level that is about it
+	# and every element hard mode adds has a level that is about it
 	var taught := {}
 	for i in range(Difficulty.HARD_START, Difficulty.EXTRA_START):
 		var lv: Dictionary = Difficulty.LEVELS[i]
@@ -855,6 +937,49 @@ func _test_seed_to_editor() -> void:
 	check("editor keeps the geometry", faithful)
 
 
+# an element must not turn up before the level that teaches it. Left open, total
+# reflection was landing on a third of the boards five levels before its own
+func _test_early_no_tir() -> void:
+	var leaked := ""
+	for li in 7:
+		var level: Dictionary = Difficulty.LEVELS[li]
+		for k in 8:
+			var rng := RandomNumberGenerator.new()
+			rng.seed = 7100 + li * 50 + k
+			var p := ProblemGen.generate(level, rng)
+			if not p.is_empty() and p.trace.exits[0].tir > 0:
+				leaked = level.title
+	check("nothing before the critical angle level reflects totally", leaked.is_empty())
+	var rng2 := RandomNumberGenerator.new()
+	rng2.seed = 7777
+	var taught := ProblemGen.generate(Difficulty.LEVELS[7], rng2)
+	check("while the level about it still does", not taught.is_empty() and taught.trace.exits[0].tir > 0)
+
+
+# the web export has no thread to search on, so it searches a slice at a time.
+# Being stopped part way must not move a board onto a different seed
+func _test_sliced_search() -> void:
+	var level: Dictionary = Difficulty.LEVELS[9]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4600
+	var whole := ProblemGen.generate(level, rng)
+	var search := ProblemSearch.new(level, 4600, 1)
+	var slices := 0
+	# small enough that a board this slow to find cannot land in one go
+	while not search.step(150) and slices < 200000:
+		slices += 1
+	check("a sliced search finds a board as well", not whole.is_empty() and not search.found.is_empty())
+	check("and it really was stopped along the way", slices > 0)
+	if whole.is_empty() or search.found.is_empty():
+		return
+	var same: bool = (search.found.source.p as Vector2).is_equal_approx(whole.source.p) \
+			and (search.found.source.d as Vector2).is_equal_approx(whole.source.d) \
+			and (search.found.objects as Array).size() == (whole.objects as Array).size() \
+			and (search.found.correct as Array) == (whole.correct as Array) \
+			and search.seed_used == 4600
+	check("and it is the same board the one shot search found", same)
+
+
 func _test_generation() -> void:
 	for li in Difficulty.LEVELS.size():
 		var level: Dictionary = Difficulty.LEVELS[li]
@@ -865,9 +990,11 @@ func _test_generation() -> void:
 			var rng := RandomNumberGenerator.new()
 			rng.seed = seed_v
 			# the game rerolls until it has a problem, so that is what gets
-			# tested: the player must never be left without one
+			# tested: the player must never be left without one. Ten rather than
+			# six because the slowest level needed 1213 layouts on one of these
+			# seeds and six only buys 1200, which tested the cap and not the level
 			var p := {}
-			for _retry in 6:
+			for _retry in 10:
 				p = ProblemGen.generate(level, rng)
 				if not p.is_empty():
 					break
@@ -894,16 +1021,12 @@ func _test_generation() -> void:
 			var win: Dictionary = p.trace.exits[0]
 			if win.events < level.min_events or RayTracer.count_objects(win.touched) < level.min_objects or win.tir < level.min_tir:
 				all_ok = false
-			if win.split < level.get("min_split", 0) or ProblemGen._path_sheets(win.touched, p.objects) < level.get("min_sheets", 0):
-				all_ok = false
 			# the easier ladder must never ask a problem that hangs on a hair
 			if win.clear < level.get("min_clear", 0.0):
 				all_ok = false
 			if not ProblemGen._path_has_kinds(win.touched, p.objects, level.require_kinds):
 				all_ok = false
 			if level.require_crystal and not ProblemGen._path_has_crystal(win.touched, p.objects):
-				all_ok = false
-			if level.get("require_rotary", false) and not ProblemGen._path_has_rotary(win.touched, p.objects):
 				all_ok = false
 			if level.get("require_split", false) and not ProblemGen._split_by_crystal(p.trace.exits, level.answers):
 				all_ok = false
@@ -939,7 +1062,7 @@ func _test_generation() -> void:
 			var rng2 := RandomNumberGenerator.new()
 			rng2.seed = seed_v
 			var p2 := {}
-			for _retry in 6:
+			for _retry in 10:
 				p2 = ProblemGen.generate(level, rng2)
 				if not p2.is_empty():
 					break

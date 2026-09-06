@@ -1,6 +1,6 @@
 extends SceneTree
 ## Dev tool: how often each level manages to build a problem, and how long it
-## takes. Run with `godot_console --headless --path . -s res://tools/diag.gd`
+## takes. Takes a level index, or none for all of them
 
 
 func _init() -> void:

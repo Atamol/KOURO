@@ -1,6 +1,5 @@
 extends Node
-## Dev tool: boots every screen and shoots it. Run with
-## `godot --path . res://tools/capture.tscn`, shots land in user://shots
+## Dev tool: boots every screen and shoots it, into user://shots
 
 
 const DIR := "user://shots/"
@@ -31,6 +30,10 @@ func _ready() -> void:
 		await _shot("%s.png" % scene)
 		node.queue_free()
 		await get_tree().process_frame
+	await _shoot_locked_menu()
+	await _shoot_news()
+	await _shoot_tutorial()
+	await _shoot_codex()
 	await _shoot_dense()
 	GameState.clear_stage()
 	# the level select screens only look right with something unlocked
@@ -49,7 +52,7 @@ func _ready() -> void:
 		GameState.start(lv)
 		var game: Node = load("res://scenes/game.tscn").instantiate()
 		add_child(game)
-		await get_tree().create_timer(0.4).timeout
+		await _board_ready(game)
 		await _shot("%s.png" % _slug(lv))
 		for i in game.problem.correct:
 			game._on_pick(i)
@@ -66,7 +69,7 @@ func _shoot_wrong() -> void:
 	GameState.start(Difficulty.LEVELS.size() - 2)
 	var game: Node = load("res://scenes/game.tscn").instantiate()
 	add_child(game)
-	await get_tree().create_timer(0.4).timeout
+	await _board_ready(game)
 	await _shot("asking.png")
 	for i in game.problem.choices.size():
 		if not (game.problem.correct as Array).has(i) and game.picked.size() < (game.problem.correct as Array).size():
@@ -75,6 +78,97 @@ func _shoot_wrong() -> void:
 	await _shot("wrong.png")
 	game.queue_free()
 	await get_tree().process_frame
+
+
+## the menu with nothing opened yet, where the padlocks and the gates show
+func _shoot_locked_menu() -> void:
+	for i in GameState.cleared.size():
+		GameState.cleared[i] = false
+	var menu: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(menu)
+	await get_tree().create_timer(0.3).timeout
+	await _shot("main_locked.png")
+	menu.queue_free()
+	await get_tree().process_frame
+
+
+## the mark on the tutorial button, which only comes out once hard has opened
+## and the topics it brought are still unread
+func _shoot_news() -> void:
+	for i in GameState.cleared.size():
+		GameState.cleared[i] = true
+	for i in GameState.tutorial_read.size():
+		GameState.tutorial_read[i] = false
+	var menu: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(menu)
+	await get_tree().create_timer(0.3).timeout
+	await _shot("main_news.png")
+	menu.queue_free()
+	await get_tree().process_frame
+
+
+## one of each kind the codex draws differently: plain glass, a crystal, a rotary
+## liquid between crossed sheets, and a metal
+func _shoot_codex() -> void:
+	var codex: Node = load("res://scenes/codex.tscn").instantiate()
+	add_child(codex)
+	await get_tree().process_frame
+	for key: String in ["soda_glass", "diamond", "calcite", "sucrose", "silver"]:
+		codex._select((codex.keys as Array).find(key))
+		await get_tree().process_frame
+		await _shot("codex_%s.png" % key)
+	codex.queue_free()
+	await get_tree().process_frame
+
+
+func _shoot_tutorial() -> void:
+	# the list twice over, since what hard mode adds is greyed until it opens
+	for open in [false, true]:
+		for i in GameState.cleared.size():
+			GameState.cleared[i] = open
+		var menu: Node = load("res://scenes/tutorial_menu.tscn").instantiate()
+		add_child(menu)
+		await get_tree().create_timer(0.3).timeout
+		await _shot("tutorial_menu_%s.png" % ("open" if open else "locked"))
+		menu.queue_free()
+		await get_tree().process_frame
+	for t: Dictionary in TutorialTopics.LIST:
+		GameState.tutorial_topic = t.key
+		var tut: Node = load("res://scenes/tutorial.tscn").instantiate()
+		add_child(tut)
+		await get_tree().process_frame
+		for p in (tut.pages as Array).size():
+			tut._show_page(p)
+			await get_tree().process_frame
+			await _shot("tutorial_%s_%d.png" % [t.key, p + 1])
+		tut.queue_free()
+		await get_tree().process_frame
+	# the refraction page the other way round, and past the critical angle
+	GameState.tutorial_topic = "refract"
+	var last: Node = load("res://scenes/tutorial.tscn").instantiate()
+	add_child(last)
+	await get_tree().process_frame
+	last._show_page((last.pages as Array).size() - 1)
+	last.from_air = false
+	last.knob = 30.0
+	last._refresh()
+	await get_tree().process_frame
+	await _shot("tutorial_refract_out.png")
+	last.knob = -55.0
+	last._refresh()
+	await get_tree().process_frame
+	await _shot("tutorial_refract_tir.png")
+	last.queue_free()
+	await get_tree().process_frame
+
+
+## the board is searched for on a worker, so a fixed wait is not enough
+func _board_ready(game: Node) -> void:
+	for _i in 100000:
+		if not (game.problem as Dictionary).is_empty():
+			await get_tree().process_frame
+			return
+		await get_tree().process_frame
 
 
 func _slug(index: int) -> String:
