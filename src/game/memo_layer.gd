@@ -1,7 +1,8 @@
 class_name MemoLayer
 extends Node2D
-## Freehand notes over the board. One press to one release is one stroke, which
-## is also the unit the right button rubs out and the unit undo puts back
+## Notes over the board, freehand or straight with Shift. One press to one
+## release is one stroke, which is also the unit the right button rubs out and
+## the unit undo puts back
 
 
 const INK := Color(1.0, 0.86, 0.52, 0.92)
@@ -21,20 +22,27 @@ func _ready() -> void:
 	z_index = 2
 
 
-func begin(at: Vector2, erasing: bool) -> void:
-	mode = "erase" if erasing else "draw"
+func begin(at: Vector2, erasing: bool, straight: bool = false) -> void:
+	mode = "erase" if erasing else ("line" if straight else "draw")
 	_live = PackedVector2Array()
 	_taken = []
 	if erasing:
 		rub(at)
 	else:
 		_live.append(at)
+		# the far end, dragged around until the button comes up
+		if straight:
+			_live.append(at)
 		queue_redraw()
 
 
 func extend(at: Vector2) -> void:
 	if mode == "erase":
 		rub(at)
+		return
+	if mode == "line":
+		_live[1] = at
+		queue_redraw()
 		return
 	if mode != "draw":
 		return
@@ -45,7 +53,7 @@ func extend(at: Vector2) -> void:
 
 
 func finish() -> void:
-	if mode == "draw" and _live.size() > 0:
+	if (mode == "draw" or mode == "line") and _live.size() > 0:
 		strokes.append(_live)
 		history.append({"kind": "add", "items": [[strokes.size() - 1, _live]]})
 	elif mode == "erase" and not _taken.is_empty():
