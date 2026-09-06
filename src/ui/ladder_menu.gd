@@ -5,23 +5,7 @@ extends Control
 
 const DONE := "✓"
 const WIDE := 1088
-const HEADING := {
-	"main": {
-		"title": "ノーマルモード",
-		"sub": "鏡とガラスの15段階で，最後の3つはそれまでを混ぜた総合問題",
-		"gate": "",
-	},
-	"hard": {
-		"title": "ハードモード",
-		"sub": "偏光板・複屈折・旋光性・屈折率勾配が順に増える10段階",
-		"gate": "ノーマル Lv. %d を突破すると開きます",
-	},
-	"extra": {
-		"title": "エクストラモード",
-		"sub": "全ての要素が混ざった総合問題が5問，どれも難しい",
-		"gate": "ハードを全て突破すると開きます",
-	},
-}
+const GATES := {"main": "", "hard": "gate.hard_long", "extra": "gate.extra_long"}
 
 var mode := "hard"
 var detail: Label
@@ -32,12 +16,14 @@ var hovered := -1
 
 
 func _ready() -> void:
-	mode = GameState.menu_mode if HEADING.has(GameState.menu_mode) else "main"
+	mode = GameState.menu_mode if GATES.has(GameState.menu_mode) else "main"
 	theme = UiTheme.make()
 	var bg := ColorRect.new()
 	bg.color = Color(0.055, 0.07, 0.10)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
+	add_child(MenuSky.new())
+	SkyState.allow_beams(true)
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
@@ -45,19 +31,15 @@ func _ready() -> void:
 	box.add_theme_constant_override("separation", 8)
 	center.add_child(box)
 	var title := Label.new()
-	title.text = HEADING[mode].title
+	title.text = Difficulty.mode_name(mode)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 34)
 	box.add_child(title)
-	var sub := Label.new()
-	sub.text = HEADING[mode].sub
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.add_theme_color_override("font_color", Color(0.7, 0.78, 0.9))
-	box.add_child(sub)
-	box.add_child(_spacer(10))
+	box.add_child(_spacer(20))
 	var count := Difficulty.count_of(mode)
-	# a short ladder fits on one row, a long one wants four to a row
-	var columns: int = 4 if count > 6 else count
+	# three to a row whatever the ladder's length: the stage names run long enough
+	# that four would widen the buttons past the grid and shift the whole screen
+	var columns: int = mini(3, count)
 	var grid := GridContainer.new()
 	grid.columns = columns
 	grid.add_theme_constant_override("h_separation", 10)
@@ -88,7 +70,7 @@ func _ready() -> void:
 	detail.add_theme_color_override("font_color", Color(0.62, 0.72, 0.88))
 	slot.add_child(detail)
 	var back := Button.new()
-	back.text = "メニューへ戻る"
+	back.text = Lang.t("back_menu")
 	back.custom_minimum_size = Vector2(WIDE, 40)
 	back.focus_mode = Control.FOCUS_NONE
 	back.pressed.connect(_to_menu)
@@ -133,11 +115,11 @@ func _show_detail(i: int) -> void:
 	hovered = i
 	var at := _index(i)
 	if GameState.is_open(at):
-		detail.text = Difficulty.LEVELS[at].gimmick
+		detail.text = Difficulty.gimmick_of(Difficulty.LEVELS[at])
 	elif GameState.mode_open(mode):
-		detail.text = "%sLv. %d を突破すると開きます" % [Difficulty.prefix_of(mode), i]
+		detail.text = Lang.t("gate.level") % [Difficulty.mode_name(mode), i]
 	else:
-		detail.text = HEADING[mode].gate % Difficulty.TEACHING.size() if mode == "hard" else HEADING[mode].gate
+		detail.text = Lang.t(GATES[mode]) % Difficulty.TEACHING.size() if mode == "hard" else Lang.t(GATES[mode])
 
 
 func _on_level(i: int) -> void:

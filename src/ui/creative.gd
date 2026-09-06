@@ -6,12 +6,12 @@ extends Node2D
 
 
 const SHAPES := [
-	{"kind": "mirror", "label": "鏡", "mat": "mirror", "s1": 80.0, "s2": 0.0},
-	{"kind": "slab", "label": "板", "mat": "soda_glass", "s1": 200.0, "s2": 70.0},
-	{"kind": "circle", "label": "円", "mat": "soda_glass", "s1": 60.0, "s2": 0.0},
-	{"kind": "prism", "label": "プリズム", "mat": "soda_glass", "s1": 80.0, "s2": 0.0},
-	{"kind": "polarizer", "label": "偏光板", "mat": "polarizer", "s1": 80.0, "s2": 0.0},
-	{"kind": "gradient", "label": "勾配", "mat": "bk7", "s1": 200.0, "s2": 90.0},
+	{"kind": "mirror", "mat": "mirror", "s1": 80.0, "s2": 0.0},
+	{"kind": "slab", "mat": "soda_glass", "s1": 200.0, "s2": 70.0},
+	{"kind": "circle", "mat": "soda_glass", "s1": 60.0, "s2": 0.0},
+	{"kind": "prism", "mat": "soda_glass", "s1": 80.0, "s2": 0.0},
+	{"kind": "polarizer", "mat": "polarizer", "s1": 80.0, "s2": 0.0},
+	{"kind": "gradient", "mat": "bk7", "s1": 200.0, "s2": 90.0},
 ]
 ## transmission axes offered for a sheet, in degrees from out of plane
 const AXES := [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165]
@@ -65,6 +65,8 @@ var ui: Control
 var font: Font
 var status_label: Label
 var code_edit: LineEdit
+## whether the browser is currently being handed Ctrl+V instead of Godot
+var wants_paste := false
 var mat_picker: OptionButton
 ## transmission axis for a sheet, index slope for a graded block
 var extra_picker: OptionButton
@@ -72,6 +74,23 @@ var delete_btn: Button
 var fresnel_box: CheckBox
 var auto_box: CheckBox
 var choices_spin: SpinBox
+
+
+## What Godot pastes on the web is only ever its own buffer, so while the field
+## is focused the key is handed to the browser instead and what it pasted is
+## picked up here
+func _process(_delta: float) -> void:
+	var waiting := code_edit.has_focus()
+	if waiting != wants_paste:
+		wants_paste = waiting
+		Clip.want_paste(waiting)
+	if not waiting:
+		return
+	var pasted := Clip.taken().strip_edges()
+	if pasted.is_empty():
+		return
+	code_edit.text = pasted
+	code_edit.caret_column = pasted.length()
 
 
 func _ready() -> void:
@@ -95,16 +114,18 @@ func _ready() -> void:
 func _build_ui() -> void:
 	var title := Label.new()
 	title.position = Vector2(150, 22)
-	title.text = "クリエイティブ"
+	title.text = Lang.t("ed.title")
 	ui.add_child(title)
 	var help := Label.new()
-	help.position = Vector2(300, 10)
+	help.position = Vector2(300, 6)
 	help.add_theme_font_size_override("font_size", 13)
+	# three lines at the theme's spacing reach into the frame's border
+	help.add_theme_constant_override("line_spacing", 0)
 	help.add_theme_color_override("font_color", Color(0.62, 0.72, 0.88))
-	help.text = "物体: クリックで選択  中をドラッグで移動  外周で大きさ  頂点で回転  ホイールでも回転\n光源: 枠上の2点をドラッグ (根元=位置，先端=向き)    手動時は枠付近クリックで誤答を追加\n偏光板の透過軸と勾配の傾きは，選んでから下のリストで変えます"
+	help.text = Lang.t("ed.help")
 	ui.add_child(help)
 	var back := Button.new()
-	back.text = "メニュー"
+	back.text = Lang.t("menu")
 	back.position = Vector2(1030, 16)
 	back.custom_minimum_size = Vector2(100, 34)
 	back.focus_mode = Control.FOCUS_NONE
@@ -115,45 +136,49 @@ func _build_ui() -> void:
 	row1.position = Vector2(150, 588)
 	row1.add_theme_constant_override("separation", 6)
 	ui.add_child(row1)
-	var add_label := Label.new()
-	add_label.text = "置く"
-	add_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row1.add_child(add_label)
-	row1.add_child(_gap(2))
 	for i in SHAPES.size():
 		var b := Button.new()
-		b.text = SHAPES[i].label
-		b.custom_minimum_size = Vector2(66, 36)
+		b.text = Lang.t("shape." + str(SHAPES[i].kind))
+		b.custom_minimum_size = Vector2(60, 36)
 		b.focus_mode = Control.FOCUS_NONE
 		b.pressed.connect(_place_shape.bind(i))
 		row1.add_child(b)
-	row1.add_child(_gap(14))
+	row1.add_child(_gap(8))
 	mat_picker = OptionButton.new()
-	mat_picker.custom_minimum_size = Vector2(172, 36)
-	# without this the button widens to its longest material name
-	mat_picker.clip_text = true
 	mat_picker.focus_mode = Control.FOCUS_NONE
 	mat_picker.item_selected.connect(_on_material)
-	row1.add_child(mat_picker)
+	var mat_slot := _capped(mat_picker, 250)
+	row1.add_child(mat_slot)
 	extra_picker = OptionButton.new()
-	extra_picker.custom_minimum_size = Vector2(148, 36)
-	extra_picker.clip_text = true
+	extra_picker.custom_minimum_size = Vector2(128, 36)
 	extra_picker.focus_mode = Control.FOCUS_NONE
 	extra_picker.item_selected.connect(_on_extra)
 	row1.add_child(extra_picker)
 	delete_btn = Button.new()
-	delete_btn.text = "削除"
-	delete_btn.custom_minimum_size = Vector2(72, 36)
+	delete_btn.text = Lang.t("ed.delete")
+	delete_btn.custom_minimum_size = Vector2(64, 36)
 	delete_btn.focus_mode = Control.FOCUS_NONE
 	delete_btn.pressed.connect(_delete_selected)
 	row1.add_child(delete_btn)
+	# room between the two that remove things, so neither is hit by mistake
+	row1.add_child(_gap(8))
+	var clear_b := Button.new()
+	clear_b.text = Lang.t("ed.clear")
+	clear_b.custom_minimum_size = Vector2(72, 36)
+	clear_b.focus_mode = Control.FOCUS_NONE
+	clear_b.pressed.connect(func() -> void:
+		draft.objects.clear()
+		_select(-1)
+		_touch())
+	row1.add_child(clear_b)
+	_elastic(row1, mat_slot, 170)
 
 	var row2 := HBoxContainer.new()
 	row2.position = Vector2(150, 632)
 	row2.add_theme_constant_override("separation", 8)
 	ui.add_child(row2)
 	fresnel_box = CheckBox.new()
-	fresnel_box.text = "分岐 (Fresnel)"
+	fresnel_box.text = Lang.t("ed.fresnel")
 	fresnel_box.focus_mode = Control.FOCUS_NONE
 	fresnel_box.toggled.connect(func(on: bool) -> void:
 		draft.fresnel = on
@@ -161,7 +186,7 @@ func _build_ui() -> void:
 	row2.add_child(fresnel_box)
 	row2.add_child(_gap(6))
 	auto_box = CheckBox.new()
-	auto_box.text = "誤答は自動"
+	auto_box.text = Lang.t("ed.auto")
 	auto_box.button_pressed = true
 	auto_box.focus_mode = Control.FOCUS_NONE
 	auto_box.toggled.connect(func(on: bool) -> void:
@@ -174,7 +199,7 @@ func _build_ui() -> void:
 	row2.add_child(auto_box)
 	row2.add_child(_gap(6))
 	var ch_label := Label.new()
-	ch_label.text = "選択肢"
+	ch_label.text = Lang.t("ed.choices")
 	ch_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row2.add_child(ch_label)
 	choices_spin = SpinBox.new()
@@ -188,41 +213,55 @@ func _build_ui() -> void:
 	row2.add_child(choices_spin)
 	row2.add_child(_gap(10))
 	code_edit = LineEdit.new()
-	code_edit.custom_minimum_size = Vector2(196, 36)
-	code_edit.placeholder_text = "コードを貼り付け"
+	code_edit.custom_minimum_size = Vector2(176, 36)
+	code_edit.placeholder_text = Lang.t("ed.paste")
 	row2.add_child(code_edit)
+	Clip.listen()
 	var load_b := Button.new()
-	load_b.text = "読み込み"
+	load_b.text = Lang.t("ed.load")
 	load_b.custom_minimum_size = Vector2(88, 36)
 	load_b.focus_mode = Control.FOCUS_NONE
 	load_b.pressed.connect(func() -> void: _load_code(code_edit.text))
 	row2.add_child(load_b)
 	var copy_b := Button.new()
-	copy_b.text = "コードをコピー"
+	copy_b.text = Lang.t("ed.copy")
 	copy_b.custom_minimum_size = Vector2(124, 36)
 	copy_b.focus_mode = Control.FOCUS_NONE
 	copy_b.pressed.connect(_copy_code)
 	row2.add_child(copy_b)
-	var clear_b := Button.new()
-	clear_b.text = "全消去"
-	clear_b.custom_minimum_size = Vector2(76, 36)
-	clear_b.focus_mode = Control.FOCUS_NONE
-	clear_b.pressed.connect(func() -> void:
-		draft.objects.clear()
-		_select(-1)
-		_touch())
-	row2.add_child(clear_b)
 	var play_b := Button.new()
-	play_b.text = "遊ぶ"
+	play_b.text = Lang.t("ed.play")
 	play_b.custom_minimum_size = Vector2(88, 36)
 	play_b.focus_mode = Control.FOCUS_NONE
 	play_b.pressed.connect(_play)
 	row2.add_child(play_b)
+	_elastic(row2, code_edit, 120)
 
 	status_label = Label.new()
 	status_label.position = Vector2(150, 678)
 	status_label.add_theme_font_size_override("font_size", 14)
 	ui.add_child(status_label)
+
+
+## An OptionButton sizes itself to its widest item, so a long material name
+## pushes the whole row out as soon as one is on the list. A plain Control keeps
+## the size it was handed whatever its child asks for
+func _capped(picker: OptionButton, w: int) -> Control:
+	var slot := Control.new()
+	slot.custom_minimum_size = Vector2(w, 36)
+	slot.clip_contents = true
+	picker.clip_text = true
+	slot.add_child(picker)
+	picker.set_anchors_preset(Control.PRESET_FULL_RECT)
+	return slot
+
+
+## How wide a row comes out depends on the language, and it still has to end
+## where the frame does. One control gives, so the rest keep their drawn widths
+func _elastic(row: HBoxContainer, giver: Control, floor_w: int) -> void:
+	row.custom_minimum_size.x = ProblemGen.FIELD.size.x
+	giver.custom_minimum_size.x = floor_w
+	giver.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 
 func _gap(w: int) -> Control:
@@ -264,17 +303,18 @@ func _rebuild_materials() -> void:
 	if sel_kind != "object" or selected < 0:
 		mat_picker.disabled = true
 		extra_picker.disabled = true
-		mat_picker.add_item("物質 (物体を選ぶ)")
+		mat_picker.add_item(Lang.t("ed.pick_body"))
 		extra_picker.add_item("―")
 		return
 	var rec: Dictionary = draft.objects[selected]
 	var table := _material_table(rec.kind)
 	mat_picker.disabled = table.is_empty()
 	if table.is_empty():
-		mat_picker.add_item("物質なし")
+		mat_picker.add_item(Lang.t("ed.no_material"))
 	for key: String in table:
 		var info: Dictionary = OpticsMaterials.REFLECTIVE[key] if rec.kind == "mirror" else OpticsMaterials.TRANSPARENT[key]
-		mat_picker.add_item(info.label if rec.kind == "mirror" else "%s  n=%.3f" % [info.label, info.n])
+		var name := OpticsMaterials.label_of(key)
+		mat_picker.add_item(name if rec.kind == "mirror" else "%s  n=%.3f" % [name, info.n])
 	mat_picker.select(maxi(table.find(rec.mat), 0))
 	_rebuild_extra(rec)
 
@@ -285,7 +325,7 @@ func _rebuild_extra(rec: Dictionary) -> void:
 	extra_picker.disabled = not ProblemGen.EXTRA_KINDS.has(rec.kind)
 	if rec.kind == "polarizer":
 		for deg: int in AXES:
-			extra_picker.add_item("透過軸 %d°" % deg)
+			extra_picker.add_item(Lang.t("ed.axis") % deg)
 		extra_picker.select(maxi(AXES.find(int(rec.extra) % 180), 0))
 		return
 	if rec.kind == "gradient":
@@ -293,7 +333,7 @@ func _rebuild_extra(rec: Dictionary) -> void:
 		var now := GradientBody.slope_from_byte(int(rec.extra))
 		var near := 0
 		for i in SLOPES.size():
-			extra_picker.add_item("勾配 %+d%%" % roundi(SLOPES[i] * 100.0))
+			extra_picker.add_item(Lang.t("ed.slope") % roundi(SLOPES[i] * 100.0))
 			if absf(SLOPES[i] * cap - now) < absf(SLOPES[near] * cap - now):
 				near = i
 		extra_picker.select(near)
@@ -342,12 +382,12 @@ func _delete_selected() -> void:
 
 func _place_shape(index: int) -> void:
 	if draft.objects.size() >= StageCode.MAX_OBJECTS:
-		_note("物体は %d 個までです" % StageCode.MAX_OBJECTS)
+		_note(Lang.t("ed.too_many") % StageCode.MAX_OBJECTS)
 		return
 	var shape: Dictionary = SHAPES[index]
 	var spot := _free_spot(shape)
 	if spot == Vector2.INF:
-		_note("空いている場所がありません")
+		_note(Lang.t("ed.no_room"))
 		return
 	draft.objects.append(_shape_record(shape, spot))
 	_select(draft.objects.size() - 1)
@@ -429,7 +469,7 @@ func _press_at(pos: Vector2) -> void:
 			return
 		if _near_border(pos):
 			if _crowds_source(pos):
-				_note("光源のハンドルに近すぎます．少し離してから置いてください")
+				_note(Lang.t("ed.near_handle"))
 				return
 			_add_decoy(pos)
 			return
@@ -471,7 +511,7 @@ func _decoy_at(pos: Vector2) -> int:
 
 func _add_decoy(pos: Vector2) -> void:
 	if draft.decoys.size() >= StageCode.MAX_DECOYS:
-		_note("選択肢は %d 個までです" % (StageCode.MAX_DECOYS + 1))
+		_note(Lang.t("ed.too_many_choices") % (StageCode.MAX_DECOYS + 1))
 		return
 	draft.decoys.append(StageCode.snap_source_s(_nearest_border_s(pos)))
 	_select(draft.decoys.size() - 1, "decoy")
@@ -691,17 +731,17 @@ func _find_faults() -> Dictionary:
 	for i in objects.size():
 		var obj: SceneObj = objects[i]
 		if obj == null or not StageCode.size_ok(draft.objects[i]):
-			out[i] = "大きさが範囲外"
+			out[i] = Lang.t("ed.fault_size")
 			continue
 		if not StageCode.in_field(obj):
-			out[i] = "枠からはみ出している"
+			out[i] = Lang.t("ed.fault_outside")
 			continue
 		var others: Array = []
 		for j in objects.size():
 			if j != i:
 				others.append(objects[j])
 		if not ProblemGen.no_overlap(obj, others):
-			out[i] = "他の物体と重なっている"
+			out[i] = Lang.t("ed.fault_overlap")
 	return out
 
 
@@ -755,14 +795,14 @@ func _nearest_border_s(pos: Vector2) -> float:
 func _load_code(text: String) -> void:
 	var parsed := StageCode.read(text)
 	if parsed.has("error"):
-		_note("読み込めません: " + str(parsed.error))
+		_note(Lang.t("ed.cannot_load") + str(parsed.error))
 		return
 	if parsed.mode == "seed":
 		var rng := RandomNumberGenerator.new()
 		rng.seed = parsed.seed
 		var problem := ProblemGen.generate(Difficulty.LEVELS[parsed.level], rng)
 		if problem.is_empty():
-			_note("この seed からは再現できませんでした")
+			_note(Lang.t("ed.seed_failed"))
 			return
 		var lv: Dictionary = Difficulty.LEVELS[parsed.level]
 		draft.fresnel = lv.fresnel
@@ -777,7 +817,7 @@ func _load_code(text: String) -> void:
 		# the seed replays exactly, so share that until the draft is edited
 		seed_code = StageCode.from_seed(parsed.level, parsed.seed)
 		seed_level = parsed.level
-		_note("Lv. %d の seed を読み込みました．編集するとこのステージは共有コードになります" % (parsed.level + 1))
+		_note(Lang.t("ed.seed_loaded") % (parsed.level + 1))
 	else:
 		draft.fresnel = parsed.fresnel
 		draft.choices = parsed.choices
@@ -786,7 +826,7 @@ func _load_code(text: String) -> void:
 		draft.objects = parsed.objects
 		seed_code = ""
 		seed_level = -1
-		_note("共有コードを読み込みました")
+		_note(Lang.t("ed.code_loaded"))
 	_sync_controls()
 	_refresh()
 
@@ -814,10 +854,10 @@ func _refresh() -> void:
 	var msg := ""
 	var col := Color(0.7, 0.82, 0.95)
 	if not faults.is_empty():
-		msg = "赤い物体を直してください (%d 個)" % faults.size()
+		msg = Lang.t("ed.fix_red") % faults.size()
 		col = Color(1.0, 0.6, 0.6)
 	elif stage.has("error"):
-		msg = "コードにできません: " + str(stage.error)
+		msg = Lang.t("ed.cannot_encode") + str(stage.error)
 		col = Color(1.0, 0.6, 0.6)
 	else:
 		# the real path is drawn whatever else is going on. Placing decoys by
@@ -833,16 +873,16 @@ func _refresh() -> void:
 			rng.seed = code.hash()
 			preview = ProblemGen.build_custom(StageCode.objects_of(stage), StageCode.source_of(stage), stage.fresnel, stage.choices, rng, stage.get("decoys", []), stage.get("manual", false))
 		if truth.is_empty():
-			msg = "この配置では光が抜けません (光源の向きか物体の位置を変えてください)"
+			msg = Lang.t("ed.no_exit")
 			col = Color(1.0, 0.75, 0.5)
 		elif draft.manual and draft.decoys.is_empty():
-			msg = "緑が正解の出口．枠のあたりをクリックして誤答の選択肢を置いてください"
+			msg = Lang.t("ed.place_decoys")
 			col = Color(1.0, 0.75, 0.5)
 		elif preview.is_empty():
-			msg = "この配置では出題できません (選択肢が置けていないか，正解に近すぎます)"
+			msg = Lang.t("ed.cannot_ask")
 			col = Color(1.0, 0.75, 0.5)
 		else:
-			msg = "物体 %d 個   相互作用 %d回   答える箇所 %d   コード %d文字" % [
+			msg = Lang.t("ed.summary") % [
 				draft.objects.size(), preview.trace.exits[0].events, (preview.correct as Array).size(), _share_code().length()]
 	status_label.text = msg if status.is_empty() else msg + "    " + status
 	status_label.add_theme_color_override("font_color", col)
@@ -857,10 +897,10 @@ func _note(text: String) -> void:
 
 func _copy_code() -> void:
 	if not faults.is_empty() or stage.has("error"):
-		_note("赤い物体があるうちは共有できません")
+		_note(Lang.t("ed.no_share_red"))
 		return
-	DisplayServer.clipboard_set(_share_code())
-	_note("コードをクリップボードにコピーしました")
+	Clip.put(_share_code())
+	_note(Lang.t("ed.copied"))
 
 
 func _share_code() -> String:
@@ -869,10 +909,10 @@ func _share_code() -> String:
 
 func _play() -> void:
 	if not faults.is_empty():
-		_note("赤い物体があるうちは遊べません")
+		_note(Lang.t("ed.no_play_red"))
 		return
 	if preview.is_empty():
-		_note("出題できる配置になっていません")
+		_note(Lang.t("ed.not_askable"))
 		return
 	GameState.play_stage(_share_code(), true)
 	get_tree().change_scene_to_file("res://scenes/game.tscn")

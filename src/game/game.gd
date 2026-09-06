@@ -2,8 +2,16 @@ extends Node2D
 
 
 const LABELS := StageCode.LABELS
-## width reserved either side of the prompt, so it stays centred on the frame
-const SIDE := 200
+## width reserved either side of the prompt, so it stays centred on the frame.
+## Wide enough for the memo hint's two columns and still leaving the longest
+## prompt the room it asks for
+const SIDE := 250
+## how long a search has to run before it is worth showing a bar for
+const SLOW_BUILD := 2.0
+## how much of a frame the search may take when it has to run on the main one.
+## Most of it, since nothing but the panel is on screen, but not so much that the
+## bar stops moving
+const SLICE_US := 12000
 
 var level: Dictionary
 var problem: Dictionary = {}
@@ -19,6 +27,7 @@ var beams: Node2D
 var memo: MemoLayer
 var ui: Control
 var hud: Label
+var stats: Label
 var seed_label: Label
 var copy_btn: Button
 var retry_btn: Button
@@ -30,6 +39,14 @@ var memo_row: HBoxContainer
 var prompt_label: Label
 var next_btn: Button
 var replay_btn: Button
+## the board being searched for, off the main thread so the window keeps drawing
+var worker: Thread
+## the search itself, which _process drives directly when there is no thread
+var hunt: ProblemSearch
+var loading: PanelContainer
+var loading_label: Label
+var loading_bar: ProgressBar
+var waited := 0.0
 
 
 func _ready() -> void:
@@ -49,13 +66,21 @@ func _ready() -> void:
 	_build_hud()
 	_build_memo_controls()
 	_build_result_bar()
+	_build_loading()
 	_next_problem()
 
 
 func _build_hud() -> void:
 	hud = Label.new()
-	hud.position = Vector2(150, 22)
+	hud.position = Vector2(150, 16)
 	ui.add_child(hud)
+	# on its own line: side by side, the longest stage name ran under the seed and
+	# its buttons, and the three readings ran into each other
+	stats = Label.new()
+	stats.position = Vector2(150, 44)
+	stats.add_theme_font_size_override("font_size", 15)
+	stats.add_theme_color_override("font_color", Color(0.68, 0.76, 0.9))
+	ui.add_child(stats)
 	# right aligned against the field's edge, so the seed and the buttons stay
 	# together however long the code is
 	var box := HBoxContainer.new()
@@ -70,13 +95,13 @@ func _build_hud() -> void:
 	seed_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	box.add_child(seed_label)
 	copy_btn = Button.new()
-	copy_btn.text = "コピー"
+	copy_btn.text = Lang.t("game.copy")
 	copy_btn.custom_minimum_size = Vector2(90, 34)
 	copy_btn.focus_mode = Control.FOCUS_NONE
 	copy_btn.pressed.connect(_copy_code)
 	box.add_child(copy_btn)
 	retry_btn = Button.new()
-	retry_btn.text = "別の問題"
+	retry_btn.text = Lang.t("game.retry")
 	retry_btn.custom_minimum_size = Vector2(104, 34)
 	retry_btn.focus_mode = Control.FOCUS_NONE
 	retry_btn.pressed.connect(_retry)
@@ -84,7 +109,7 @@ func _build_hud() -> void:
 	retry_btn.visible = GameState.stage_code.is_empty()
 	box.add_child(retry_btn)
 	var menu_btn := Button.new()
-	menu_btn.text = "メニュー"
+	menu_btn.text = Lang.t("menu")
 	menu_btn.custom_minimum_size = Vector2(100, 34)
 	menu_btn.focus_mode = Control.FOCUS_NONE
 	menu_btn.pressed.connect(_to_menu)
@@ -100,14 +125,20 @@ func _build_memo_controls() -> void:
 	memo_row.custom_minimum_size = Vector2(980, 0)
 	memo_row.add_theme_constant_override("separation", 0)
 	ui.add_child(memo_row)
-	var help := Label.new()
 	# both ends are the same width, so the prompt between them stays centred on
 	# the frame rather than on what is left over
-	help.custom_minimum_size = Vector2(SIDE, 68)
-	help.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	help.text = "左ドラッグ  書く\n右ドラッグ  一筆消す\nZ キー  ひとつ戻す"
-	help.add_theme_color_override("font_color", Color(1.0, 0.86, 0.52, 0.85))
+	var help := HBoxContainer.new()
+	help.custom_minimum_size = Vector2(SIDE, 92)
+	help.add_theme_constant_override("separation", 8)
 	memo_row.add_child(help)
+	# two columns rather than one block of text, so what each one does starts at
+	# the same place on every line instead of wherever the key name ran out
+	for col: String in [Lang.t("game.memo_keys"), Lang.t("game.memo_acts")]:
+		var side := Label.new()
+		side.text = col
+		side.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		side.add_theme_color_override("font_color", Color(1.0, 0.86, 0.52, 0.85))
+		help.add_child(side)
 	prompt_label = Label.new()
 	prompt_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -115,23 +146,52 @@ func _build_memo_controls() -> void:
 	prompt_label.add_theme_color_override("font_color", Color(0.68, 0.76, 0.9))
 	memo_row.add_child(prompt_label)
 	var right := HBoxContainer.new()
-	right.custom_minimum_size = Vector2(SIDE, 68)
+	right.custom_minimum_size = Vector2(SIDE, 92)
 	right.alignment = BoxContainer.ALIGNMENT_END
 	memo_row.add_child(right)
 	var wipe := Button.new()
-	wipe.text = "メモを全消去"
+	wipe.text = Lang.t("game.wipe_memo")
 	wipe.custom_minimum_size = Vector2(128, 34)
+	wipe.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	wipe.focus_mode = Control.FOCUS_NONE
 	wipe.pressed.connect(func() -> void: memo.clear_all())
 	right.add_child(wipe)
 
 
+## Sits in the middle of the empty frame while the worker searches. Nothing else
+## is on screen then, so it does not have to fight for room
+func _build_loading() -> void:
+	loading = PanelContainer.new()
+	loading.visible = false
+	var f := ProblemGen.FIELD
+	loading.position = Vector2(f.get_center().x - 130, f.get_center().y - 38)
+	loading.custom_minimum_size = Vector2(260, 76)
+	ui.add_child(loading)
+	var col := VBoxContainer.new()
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_theme_constant_override("separation", 10)
+	loading.add_child(col)
+	loading_label = Label.new()
+	loading_label.text = Lang.t("game.building")
+	loading_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	loading_label.add_theme_color_override("font_color", Color(0.68, 0.76, 0.9))
+	col.add_child(loading_label)
+	# the search has no idea how far along it is, so the bar sweeps rather than
+	# fills. It only comes out once the wait is long enough to want explaining
+	loading_bar = ProgressBar.new()
+	loading_bar.indeterminate = true
+	loading_bar.show_percentage = false
+	loading_bar.custom_minimum_size = Vector2(0, 10)
+	loading_bar.visible = false
+	col.add_child(loading_bar)
+
+
 func _copy_code() -> void:
-	DisplayServer.clipboard_set(current_code)
-	copy_btn.text = "コピー済"
+	Clip.put(current_code)
+	copy_btn.text = Lang.t("game.copied")
 	await get_tree().create_timer(1.2).timeout
 	if is_instance_valid(copy_btn):
-		copy_btn.text = "コピー"
+		copy_btn.text = Lang.t("game.copy")
 
 
 func _build_result_bar() -> void:
@@ -158,7 +218,7 @@ func _build_result_bar() -> void:
 	result_label.custom_minimum_size = Vector2(300, 0)
 	hb.add_child(result_label)
 	replay_btn = Button.new()
-	replay_btn.text = "もう一度再生  (R)"
+	replay_btn.text = Lang.t("game.replay")
 	replay_btn.custom_minimum_size = Vector2(176, 44)
 	replay_btn.focus_mode = Control.FOCUS_NONE
 	replay_btn.pressed.connect(_replay)
@@ -168,9 +228,9 @@ func _build_result_bar() -> void:
 	next_btn.focus_mode = Control.FOCUS_NONE
 	next_btn.pressed.connect(_advance)
 	hb.add_child(next_btn)
-	next_btn.text = "エディタへ  (Space)" if GameState.from_creative else "次の問題  (Space)"
+	next_btn.text = Lang.t("game.to_editor") if GameState.from_creative else Lang.t("game.next_problem")
 	var menu_b := Button.new()
-	menu_b.text = "メニュー"
+	menu_b.text = Lang.t("menu")
 	menu_b.custom_minimum_size = Vector2(104, 44)
 	menu_b.focus_mode = Control.FOCUS_NONE
 	menu_b.pressed.connect(_to_menu)
@@ -256,7 +316,7 @@ func _on_mouse_button(event: InputEventMouseButton) -> void:
 		memo.finish()
 		return
 	if ProblemGen.FIELD.has_point(at):
-		memo.begin(at, rubbing)
+		memo.begin(at, rubbing, event.shift_pressed)
 
 
 ## a drag that wanders off the board keeps writing, but only inside the frame
@@ -273,49 +333,112 @@ func _next_problem() -> void:
 	revealed = false
 	beams.clear_path()
 	memo.wipe()
+	_clear_markers()
 	problem = {}
+	prompt_label.text = ""
 	level = Difficulty.LEVELS[GameState.current_level()]
+	_update_hud()
+	queue_redraw()
+	_start_build()
+
+
+## Rejection sampling takes seconds on the last stages, so the search runs on a
+## worker and _process picks the board up when it lands. A shared layout is
+## already written down and needs no search.
+##
+## The single threaded web export has no worker to hand it to, so there _process
+## drives the same search a slice at a time and the panel keeps animating
+func _start_build() -> void:
+	_join()
+	var from := 0
+	var tries := 1
 	if GameState.stage_code.is_empty():
-		for _i in 20:
-			rng.randomize()
-			current_seed = rng.randi()
-			rng.seed = current_seed
-			problem = ProblemGen.generate(level, rng)
-			if not problem.is_empty():
-				break
-		current_code = StageCode.from_seed(GameState.current_level(), current_seed)
+		rng.randomize()
+		from = rng.randi()
+		tries = 20
 	else:
 		current_code = GameState.stage_code
-		problem = _load_stage(current_code)
-	if problem.is_empty():
+		var stage := StageCode.read(current_code)
+		if stage.has("error"):
+			push_error("bad stage code: " + str(stage.error))
+			return
+		if stage.mode != "seed":
+			# everyone holding the code must see the same options, so the decoys are
+			# drawn from the code itself rather than from a fresh random stream
+			rng.seed = current_code.hash()
+			_take(ProblemGen.build_custom(StageCode.objects_of(stage), StageCode.source_of(stage),
+					stage.fresnel, stage.choices, rng, stage.get("decoys", []), stage.get("manual", false)), 0)
+			return
+		level = Difficulty.LEVELS[stage.level]
+		from = stage.seed
+	loading.visible = true
+	loading_bar.visible = false
+	hunt = ProblemSearch.new(level, from, tries)
+	if OS.has_feature("threads"):
+		worker = Thread.new()
+		# no budget: the worker has no frame to give back
+		worker.start(hunt.step.bind(0))
+
+
+func _process(delta: float) -> void:
+	if hunt == null:
+		return
+	waited += delta
+	loading_label.text = Lang.t("game.building") + ".".repeat(1 + int(waited * 2.0) % 3)
+	loading_bar.visible = waited >= SLOW_BUILD
+	if worker != null:
+		if worker.is_alive():
+			return
+		worker.wait_to_finish()
+		worker = null
+	elif not hunt.step(SLICE_US):
+		return
+	var out := hunt
+	hunt = null
+	_land(out)
+
+
+func _land(out: ProblemSearch) -> void:
+	loading.visible = false
+	waited = 0.0
+	_take(out.found, out.seed_used)
+
+
+func _take(built: Dictionary, seed_v: int) -> void:
+	if built.is_empty():
 		push_error("could not build a problem")
 		return
+	problem = built
+	current_seed = seed_v
+	if GameState.stage_code.is_empty():
+		current_code = StageCode.from_seed(GameState.current_level(), current_seed)
 	_update_prompt()
 	_rebuild_markers()
 	_update_hud()
 	queue_redraw()
 
 
-func _load_stage(code: String) -> Dictionary:
-	var stage := StageCode.read(code)
-	if stage.has("error"):
-		push_error("bad stage code: " + str(stage.error))
-		return {}
-	if stage.mode == "seed":
-		level = Difficulty.LEVELS[stage.level]
-		current_seed = stage.seed
-		rng.seed = current_seed
-		return ProblemGen.generate(level, rng)
-	# everyone holding the code must see the same options, so the decoys are
-	# drawn from the code itself rather than from a fresh random stream
-	rng.seed = code.hash()
-	return ProblemGen.build_custom(StageCode.objects_of(stage), StageCode.source_of(stage), stage.fresnel, stage.choices, rng, stage.get("decoys", []), stage.get("manual", false))
+## A worker left running past the scene would keep a board nobody asked for
+func _join() -> void:
+	if worker != null:
+		worker.wait_to_finish()
+		worker = null
+	hunt = null
+	loading.visible = false
 
 
-func _rebuild_markers() -> void:
+func _exit_tree() -> void:
+	_join()
+
+
+func _clear_markers() -> void:
 	for m in markers:
 		m.queue_free()
 	markers.clear()
+
+
+func _rebuild_markers() -> void:
+	_clear_markers()
 	for i in problem.choices.size():
 		var b := Button.new()
 		b.text = LABELS[i]
@@ -356,10 +479,15 @@ func _wanted() -> int:
 func _update_prompt() -> void:
 	var want := _wanted()
 	var keys: String = LABELS.substr(0, problem.choices.size())
+	# once the board branches the answer is a ranking, not just a place, and there
+	# is nothing on screen that says so
+	var ranked: bool = problem.trace.exits.size() > want
 	if want == 1:
-		prompt_label.text = "光が抜ける地点を選ぶ  (キー %s でも選択可)" % keys
+		prompt_label.text = Lang.t("game.ask_one_bright" if ranked else "game.ask_one") % keys
+	elif ranked:
+		prompt_label.text = Lang.t("game.ask_many_bright") % [want, picked.size(), want, keys]
 	else:
-		prompt_label.text = "光が抜ける地点を %d 箇所選ぶ  (%d / %d)   キー %s でも選択可" % [want, picked.size(), want, keys]
+		prompt_label.text = Lang.t("game.ask_many") % [want, picked.size(), want, keys]
 
 
 ## With more than one answer a click toggles, and the reveal waits until the
@@ -385,15 +513,47 @@ func _on_pick(i: int) -> void:
 
 
 func _play_reveal(score_it: bool) -> void:
-	beams.show_path(problem.trace.segments, problem.trace.exits)
+	var shown: Array = problem.trace.exits
+	var legs: Array = problem.trace.segments
+	# a crystal parts the beam and both halves are answers, so both are drawn.
+	# Anywhere else the other branches are beams nobody was asked about, and
+	# drawing them makes the answer harder to pick out than the problem was
+	if not _splits_light():
+		shown = _answer_exits()
+		legs = RayTracer.legs_to(problem.trace, shown)
+	beams.show_path(legs, shown, problem.get("reads_light", false))
+	# a canvas keeps its last commands until it is asked again, and the lead this
+	# one drew before the answer would still be sitting under the path
+	queue_redraw()
 	var t_max := 0.0
-	for seg in problem.trace.segments:
+	for seg in legs:
 		t_max = maxf(t_max, seg.t1)
 	_stop_reveal()
 	reveal_tween = create_tween()
 	reveal_tween.tween_method(beams.set_reveal, 0.0, t_max, clampf(t_max, 0.8, 5.0))
 	if score_it:
 		reveal_tween.finished.connect(_show_result)
+
+
+## Only a crystal makes one beam into two answers. Partial reflection makes
+## branches too, but they are decoys, not answers
+func _splits_light() -> bool:
+	for o: SceneObj in problem.objects:
+		if OpticsMaterials.is_crystal(o.mat_key):
+			return true
+	return false
+
+
+## The exits the markers call correct. Matching on the point keeps this working
+## for hand made stages, which have no level table to read the count from
+func _answer_exits() -> Array:
+	var out: Array = []
+	for e: Dictionary in problem.trace.exits:
+		for i: int in problem.correct:
+			if (e.point as Vector2).is_equal_approx(problem.choices[i]):
+				out.append(e)
+				break
+	return out if not out.is_empty() else problem.trace.exits
 
 
 ## Watching it again must not answer the problem a second time
@@ -419,7 +579,7 @@ func _show_result() -> void:
 			ok = false
 	if picked.size() != right.size():
 		ok = false
-	GameState.record(ok)
+	var delta := GameState.record(ok, (problem.choices as Array).size())
 	for i in markers.size():
 		_style_marker(markers[i], false)
 		if right.has(i):
@@ -434,10 +594,21 @@ func _show_result() -> void:
 	last_ok = ok
 	if ok:
 		GameState.mark_beaten()
-	var txt := "○ 正解" if ok else "× 不正解    正解は %s" % names
-	txt += "    相互作用 %d回" % problem.trace.exits[0].events
-	if problem.trace.exits.size() > 1:
-		txt += "    最も明るい出口に全体の %d%% が到達" % roundi(problem.trace.exits[0].intensity * 100.0)
+		var opened := GameState.take_opened()
+		if not opened.is_empty():
+			Toast.show_on(ui, Lang.t("game.unlocked") % Difficulty.mode_name(opened))
+	# nothing was scored, so there is no number to show
+	var scored := GameState.stage_code.is_empty()
+	var txt := Lang.t("game.right_scored") % delta if scored else Lang.t("game.right")
+	if scored and ok and GameState.streak >= 2:
+		txt += Lang.t("game.streak") % GameState.streak
+	if not ok:
+		txt = Lang.t("game.wrong_scored") % [-delta, names] if scored else Lang.t("game.wrong") % names
+	txt += Lang.t("game.events") % problem.trace.exits[0].events
+	# only where the answer turned on it. Elsewhere the figure is a fact about
+	# the board nobody was asked for, and reads as one more thing to have missed
+	if problem.get("reads_light", false) and problem.trace.exits.size() > 1:
+		txt += Lang.t("game.reached") % roundi(problem.trace.exits[0].intensity * 100.0)
 	result_label.text = txt
 	result_label.add_theme_color_override("font_color", Color(0.55, 1.0, 0.65) if ok else Color(1.0, 0.6, 0.6))
 	next_btn.text = _next_label(ok)
@@ -447,23 +618,33 @@ func _show_result() -> void:
 
 func _next_label(ok: bool) -> String:
 	if GameState.from_creative:
-		return "エディタへ  (Space)"
+		return Lang.t("game.to_editor")
 	if not ok:
-		return "別の問題で再挑戦  (Space)"
-	return "次のレベルへ  (Space)" if GameState.next_level() >= 0 else "メニューへ  (Space)"
+		return Lang.t("game.try_another")
+	return Lang.t("game.next_level") if GameState.next_level() >= 0 else Lang.t("game.to_menu")
 
 
 func _update_hud() -> void:
+	# the code only exists once a board does, and the one from the problem before
+	# would read as this one's
+	if problem.is_empty():
+		copy_btn.disabled = true
+		seed_label.text = ""
+	else:
+		copy_btn.disabled = false
 	if GameState.stage_code.is_empty():
 		var where := Difficulty.label(GameState.current_level())
 		if GameState.cleared[GameState.level_index]:
 			where = "✓ " + where
-		hud.text = "%s    スコア %d    連続正解 %d" % [where, GameState.score, GameState.streak]
-		seed_label.text = "Seed: %s" % current_code
+		hud.text = where
+		stats.text = Lang.t("game.stats") % [GameState.score, GameState.streak]
+		if not problem.is_empty():
+			seed_label.text = "Seed: %s" % current_code
 	else:
-		hud.text = "共有ステージ"
+		hud.text = Lang.t("game.shared")
+		stats.text = ""
 		# a hand built layout packs into a code far too long to show
-		seed_label.text = "Seed: %s" % current_code if current_code.begins_with("L") else "Seed: (作成ステージ)"
+		seed_label.text = "Seed: %s" % current_code if current_code.begins_with("L") else Lang.t("game.seed_custom")
 
 
 func _draw() -> void:
@@ -471,7 +652,14 @@ func _draw() -> void:
 	if problem.is_empty():
 		return
 	FieldDraw.bodies(self, problem.objects, ui.theme.default_font)
-	# the hint stops short of the first surface, so it never draws light
-	# carrying straight on through something
-	var first_leg: float = problem.trace.segments[0].a.distance_to(problem.trace.segments[0].b)
-	FieldDraw.source(self, problem.source.p, problem.source.d, minf(46.0, first_leg - 6.0))
+	var lead: Dictionary = problem.trace.segments[0]
+	# light up to the first surface and no further: where it goes after that is
+	# the question, but whether it gets there at all never was. A beam that meets
+	# nothing would draw the whole answer, so that one keeps the short hint
+	if problem.trace.events > 0:
+		# the answer draws this stretch itself, and twice over is twice as bright
+		if beams.segments.is_empty():
+			FieldDraw.beam(self, problem.source.p, lead.b)
+		FieldDraw.source(self, problem.source.p, problem.source.d, 0.0)
+	else:
+		FieldDraw.source(self, problem.source.p, problem.source.d, minf(46.0, lead.a.distance_to(lead.b) - 6.0))

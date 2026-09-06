@@ -87,81 +87,81 @@ static func from_stage(stage: Dictionary) -> String:
 ## or {"error": "<reason shown to the player>"}
 static func read(text: String) -> Dictionary:
 	if text.length() > MAX_TEXT:
-		return {"error": "コードが長すぎます"}
+		return {"error": Lang.t("code.too_long")}
 	var code := text.strip_edges()
 	if code.begins_with("L") or code.begins_with("l"):
 		return _read_seed(code)
 	if code.begins_with("C-") or code.begins_with("c-"):
 		return _read_custom(code.substr(2))
-	return {"error": "コードの形式が違います"}
+	return {"error": Lang.t("code.bad_form")}
 
 
 static func _read_seed(code: String) -> Dictionary:
 	var parts := code.substr(1).split("-")
 	if parts.size() != 2:
-		return {"error": "コードの形式が違います"}
+		return {"error": Lang.t("code.bad_form")}
 	# to_int() on a huge literal overflows and logs, so bound the digits first
 	if parts[0].length() > 3 or not parts[0].is_valid_int():
-		return {"error": "段階の番号が読めません"}
+		return {"error": Lang.t("code.bad_level")}
 	var level: int = parts[0].to_int() - 1
 	if level < 0 or level >= Difficulty.LEVELS.size():
-		return {"error": "段階の番号が範囲外です"}
+		return {"error": Lang.t("code.level_range")}
 	var hex := parts[1].strip_edges()
 	if hex.length() != 8 or not hex.is_valid_hex_number():
-		return {"error": "seed が読めません"}
+		return {"error": Lang.t("code.bad_seed")}
 	return {"mode": "seed", "level": level, "seed": ("0x" + hex).hex_to_int()}
 
 
 static func _read_custom(text: String) -> Dictionary:
 	if text.length() > MAX_TEXT:
-		return {"error": "コードが長すぎます"}
+		return {"error": Lang.t("code.too_long")}
 	# pasted codes often pick up line breaks on the way
 	var body := text.replace(" ", "").replace("\t", "").replace("\n", "").replace("\r", "")
 	# base64_to_raw logs an engine error on malformed input, so screen it first
 	if not _is_base64(body):
-		return {"error": "コードが壊れています"}
+		return {"error": Lang.t("code.broken")}
 	var data := Marshalls.base64_to_raw(body)
 	if data.size() < HEADER_BYTES:
-		return {"error": "コードが壊れています"}
+		return {"error": Lang.t("code.broken")}
 	var buf := StreamPeerBuffer.new()
 	buf.data_array = data
 	var version := buf.get_u8()
 	if version < 1 or version > VERSION:
-		return {"error": "コードのバージョンが違います"}
+		return {"error": Lang.t("code.version")}
 	var flags := buf.get_u8()
 	var fresnel := (flags & 1) != 0
 	var manual := (flags & 2) != 0
 	var choices := buf.get_u8()
 	if choices < MIN_CHOICES or choices > MAX_CHOICES:
-		return {"error": "選択肢の数が範囲外です"}
+		return {"error": Lang.t("code.choice_range")}
 	var perim: float = 2.0 * (ProblemGen.FIELD.size.x + ProblemGen.FIELD.size.y)
 	var source_s := float(buf.get_u16())
 	if source_s >= perim:
-		return {"error": "光源の位置が範囲外です"}
+		return {"error": Lang.t("code.source_range")}
 	var source_tilt := _u16_to_tilt(buf.get_u16())
 	# a source on a corner can be tilted right back out of the field
 	var probe: Vector2 = ProblemGen.s_to_point(source_s) + ProblemGen.border_inward(source_s).rotated(source_tilt) * 2.0
 	if not ProblemGen.FIELD.has_point(probe):
-		return {"error": "光源が盤面の外を向いています"}
+		return {"error": Lang.t("code.source_aim")}
 	var count := buf.get_u8()
 	if count > MAX_OBJECTS:
-		return {"error": "物体が多すぎます"}
+		return {"error": Lang.t("code.many_objects")}
 	var body_bytes := HEADER_BYTES + count * object_bytes(version)
 	if version == 1:
 		if data.size() != body_bytes:
-			return {"error": "コードが壊れています"}
+			return {"error": Lang.t("code.broken")}
 	elif data.size() < body_bytes + 1:
-		return {"error": "コードが壊れています"}
+		return {"error": Lang.t("code.broken")}
 	var records: Array = []
 	var objects: Array = []
 	for _i in count:
 		var kind_id := buf.get_u8()
 		if kind_id >= KINDS.size():
-			return {"error": "知らない形状が入っています"}
+			return {"error": Lang.t("code.bad_kind")}
 		var kind: String = KINDS[kind_id]
 		var mat := _index_to_mat(kind, buf.get_u8())
 		if mat.is_empty():
-			return {"error": "知らない物質が入っています"}
+			return {"error": Lang.t("code.bad_material")}
 		var rec := {
 			"kind": kind, "mat": mat,
 			"x": float(buf.get_u16()), "y": float(buf.get_u16()),
@@ -171,26 +171,26 @@ static func _read_custom(text: String) -> Dictionary:
 		if version >= 3:
 			rec.extra = buf.get_u8()
 		if not size_ok(rec):
-			return {"error": "物体の大きさが範囲外です"}
+			return {"error": Lang.t("code.size_range")}
 		var obj := ProblemGen.make_object(kind, mat, Vector2(rec.x, rec.y), rec.s1, rec.s2, rec.rot, rec.extra)
 		if obj == null or not in_field(obj):
-			return {"error": "物体が盤面の外に出ています"}
+			return {"error": Lang.t("code.outside")}
 		# nesting would break the tracer's medium tracking, so never load it
 		if not ProblemGen.no_overlap(obj, objects):
-			return {"error": "物体が重なっています"}
+			return {"error": Lang.t("code.overlap")}
 		records.append(rec)
 		objects.append(obj)
 	var decoys: Array = []
 	if version >= 2:
 		var d_count := buf.get_u8()
 		if d_count > MAX_DECOYS:
-			return {"error": "誤答の選択肢が多すぎます"}
+			return {"error": Lang.t("code.many_decoys")}
 		if data.size() != body_bytes + 1 + d_count * 2:
-			return {"error": "コードが壊れています"}
+			return {"error": Lang.t("code.broken")}
 		for _i in d_count:
 			var s := float(buf.get_u16())
 			if s >= perim:
-				return {"error": "誤答の位置が範囲外です"}
+				return {"error": Lang.t("code.decoy_range")}
 			decoys.append(s)
 	# a manual stage with no decoys yet is unplayable but readable, and the editor
 	# still has to show where the light goes
