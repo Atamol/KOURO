@@ -18,7 +18,6 @@ func is_reflector() -> bool:
 	return false
 
 
-## a sheet light crosses without bending, leaving only its polarization changed
 func is_polarizer() -> bool:
 	return false
 

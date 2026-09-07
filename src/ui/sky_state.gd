@@ -1,44 +1,33 @@
 extends Node
 ## The drifting background, kept here rather than in the screen that shows it so
-## it carries on across menus instead of starting over every time a button
-## changes scene.
+## it carries on across menus instead of starting over on every scene change.
 ##
-## Nothing it draws is a puzzle. The beams are traced by the same `RayTracer` the
-## boards use, so they bend and bounce the way the game says they would, but no
-## answer depends on them
+## The beams run the same `RayTracer` the boards do, but no answer depends on them
 
 
 const COUNT := 28
-## the opening deal goes one piece to a cell. Drawing that many positions at
-## random bunches them somewhere often enough to notice, and the bunch was the
-## same every launch while the layout came from a fixed seed
+## one piece to a cell, since that many positions drawn at random bunch up
 const GRID := Vector2i(7, 4)
-## how far past the frame the opening deal reaches. Starting them all inside it
-## makes the first minute look like the screen is emptying, since that is when
-## they spread into the margin they end up sharing
+## how far past the frame the opening deal reaches. Dealt inside it, the first
+## minute looks like the screen is emptying
 const SPREAD := 56.0
 ## only the strong benders, so a beam that meets one visibly changes course
 const GLASSES := ["carbon_disulfide", "calcite", "sapphire", "sf11", "zirconia", "diamond", "rutile", "gallium_phosphide"]
-## circle, slab, prism, mirror. Mirrors stay the rarest, since a screen of them
-## would have nothing to refract through, but a fold reads more plainly than a
-## bend so they are worth more than one in seven
+## circle, slab, prism, mirror. Mirrors are rarest: a screen of them would have
+## nothing to refract through
 const KINDS := [0, 1, 2, 0, 1, 2, 3, 0, 1, 2, 3]
-## how far a piece may stray from the shared heading
 const SPRAY := 0.35
 const SLOWEST := 6.0
 const FASTEST := 15.0
-## the room pieces keep from each other, and how hard they push to get it. Well
-## past what the tracer needs, which is only that no body sits inside another:
-## this doubles as what keeps the spread level, and at touching distance they
-## drifted into clumps and bare patches
+## well past what the tracer needs (no body inside another): this is also what
+## keeps the spread even, and at touching distance they clump
 const APART := 50.0
 const PUSH := 5.0
-## clearance past a piece's own edge before it comes round the other side. One
-## margin for all of them had to suit the largest, and kept the small ones out
-## of sight long after they had gone
+## clearance past a piece's own edge before it wraps. A single margin for all of
+## them had to suit the largest, which kept the small ones off screen too long
 const SLACK := 8.0
-## one a second, and a beam lives long enough to cross the screen and drag its
-## tail off it, so the cap is what actually decides how many are up at once
+## a beam outlives the gap between two, so this cap is what decides how many
+## are up at once
 const BEAMS := 6
 const BEAM_LEN := Vector2(170.0, 280.0)
 const BEAM_SPEED := Vector2(190.0, 320.0)
@@ -48,19 +37,19 @@ const BEAM_COL := Color(0.45, 1.00, 0.55)
 var pieces: Array = []
 var beams: Array = []
 var next_beam := BEAM_GAP
-## whether new beams may appear. The reading screens hold them back so nothing
-## crosses the page while it is being read, but what is already in flight runs
-## its course and the pieces never stop drifting
+## whether new beams may appear. What is already in flight runs its course
 var lit := true
 var roll := RandomNumberGenerator.new()
 var room := Vector2(1280, 720)
 
 
 func _ready() -> void:
+	# the bloom pass belongs to the viewport rather than to any one screen, and
+	# this is the node that outlives all of them
+	add_child(Glow.env())
 	roll.randomize()
-	# one heading for the whole sky, give or take. Independent headings shear the
-	# opening layout into a random scatter, and a random scatter has bare patches
-	# in it by nature
+	# one heading for the whole sky, give or take. Independent ones shear the deal
+	# into a scatter, and a scatter has bare patches in it by nature
 	var flow := roll.randf_range(0.0, TAU)
 	# shuffled so the kinds, which are handed out in order, do not come out laid
 	# in stripes across the grid
@@ -93,8 +82,7 @@ func _ready() -> void:
 			"turn": roll.randf_range(0.0, TAU),
 			"col": Color(tint, roll.randf_range(0.06, 0.13) if mirror else roll.randf_range(0.04, 0.09)),
 		})
-	# a cell is not wide enough to hold the largest pieces apart on its own, and
-	# an overlap is the one thing the tracer cannot read
+	# a cell is not wide enough to hold the largest pieces apart on its own
 	for i in 40:
 		_keep_apart(0.05)
 
@@ -114,15 +102,12 @@ func _process(delta: float) -> void:
 	_run_beams(delta, bodies)
 
 
-## Brought back in on the far side, at a spot no other piece is using. Landing
-## on top of one leaves the pair overlapping, and an overlap is the one thing
-## the tracer cannot make sense of
+## Brought back in on the far side, at a spot no other piece is using
 func _wrap(p: Dictionary) -> void:
 	var gone := _reach(p) + SLACK
 	var side := 0 if p.at.x < -gone else 1 if p.at.x > room.x + gone else 2 if p.at.y < -gone else 3
-	# the emptiest of several tries rather than the first that merely fits. Taking
-	# the first leaves the drift to sort the spacing out, and it does not: over a
-	# minute or two the screen ends up with a corner full and a stretch bare
+	# the emptiest of several tries, not the first that fits. Leaving the drift to
+	# sort the spacing out ends in a full corner and a bare stretch
 	var best := Vector2.ZERO
 	var best_gap := 0.0
 	for _try in 12:
@@ -131,8 +116,7 @@ func _wrap(p: Dictionary) -> void:
 		if gap > best_gap:
 			best_gap = gap
 			best = spot
-	# nothing clear anywhere along that edge: it waits outside and comes round on
-	# a later frame, when the pieces in the way have moved on
+	# nothing clear along that edge: it waits outside and comes round later
 	if best_gap > 0.0:
 		p.at = best
 
@@ -148,8 +132,7 @@ func _edge_spot(side: int, gone: float) -> Vector2:
 	return Vector2(roll.randf_range(0.0, room.x), -gone)
 
 
-## How much room a spot has to spare, as the smallest slack against any other
-## piece. At or below zero it is touching something
+## The smallest slack against any other piece. At or below zero it is touching
 func _room_at(p: Dictionary, spot: Vector2) -> float:
 	var worst := INF
 	for other: Dictionary in pieces:
@@ -159,9 +142,8 @@ func _room_at(p: Dictionary, spot: Vector2) -> float:
 	return worst
 
 
-## Nudged out of each other rather than laid out to avoid it, since they drift
-## and wrap and would collide again anyway. A frame or two of overlap right
-## after a wrap is the only time the trace has to work around one
+## Nudged apart rather than laid out to avoid it, since they drift and would
+## collide again anyway. An overlap is the one thing the tracer cannot read
 func _keep_apart(delta: float) -> void:
 	var shove := minf(delta * PUSH, 1.0)
 	for i in pieces.size():
@@ -199,12 +181,9 @@ func _run_beams(delta: float, bodies: Array) -> void:
 	beams = keep
 
 
-## The head walks its own route and only ever moves as far as its speed allows,
-## so it can never jump. What is redrawn each frame is the road ahead of it,
-## which is what makes it follow the pieces as they drift.
-##
-## While the head is inside a piece the road it is on is kept: a trace started
-## from in there would take itself for one starting in air and come out wrong
+## The road ahead is retraced each frame, which is what makes a beam follow the
+## pieces as they drift. Not while the head is inside one: a trace started in
+## there takes itself for one starting in air and comes out wrong
 func _march(b: Dictionary, bodies: Array, delta: float) -> bool:
 	var head: Vector2 = b.head
 	if _outside(bodies, head):
@@ -246,7 +225,7 @@ func _march(b: Dictionary, bodies: Array, delta: float) -> bool:
 	return screen.grow(10.0).has_point((b.trail as PackedVector2Array)[0])
 
 
-## Whether a point is in open air, which is the only place a trace may start
+## Open air, which is the only place a trace may start
 func _outside(bodies: Array, p: Vector2) -> bool:
 	for body: SceneObj in bodies:
 		if body.hit(p, 1.0):
@@ -272,17 +251,14 @@ func _tail(trail: PackedVector2Array, want: float) -> PackedVector2Array:
 	return out
 
 
-## Called by whatever is on screen. A menu wants the light, a page being read
-## does not
+## A menu wants the light, a page being read does not
 func allow_beams(on: bool) -> void:
 	lit = on
 
 
-## Where it starts and which way it points are settled here for good. The path it
-## takes from there is worked out again every frame
+## Where it starts and which way it points are settled for good here
 func _new_beam(bodies: Array) -> Dictionary:
-	# never from inside a piece: the tracer would not know which medium it began
-	# in, and the beam would sail through as if nothing were there
+	# never from inside a piece: the tracer would not know which medium it began in
 	var from := Vector2.ZERO
 	var clear := false
 	for _try in 8:
@@ -379,8 +355,8 @@ func paint(ci: CanvasItem) -> void:
 		var trail: PackedVector2Array = b.trail
 		if trail.size() < 2:
 			continue
-		ci.draw_polyline(trail, Color(BEAM_COL, 0.14), 8.0, true)
-		ci.draw_polyline(trail, Color(BEAM_COL, 0.55), 2.6, true)
+		# dimmer than a beam on a board: this one is behind the screen, not on it
+		ci.draw_polyline(trail, Glow.hot(Color(BEAM_COL, 0.75)), 2.6, true)
 
 
 func _corners(p: Dictionary) -> PackedVector2Array:

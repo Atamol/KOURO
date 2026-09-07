@@ -5,7 +5,6 @@ extends Control
 
 
 const DONE := "✓"
-## what a topic is called before it opens
 const HIDDEN := "???"
 const WIDE := 720
 const LOCKED := Color(0.45, 0.48, 0.55)

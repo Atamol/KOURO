@@ -3,15 +3,12 @@ extends Node
 ## deliberately small: one flag per level across all three ladders
 
 
-## What a solved board is worth. A wrong answer costs `miss_cost`, which is
-## worked out from the number of marks so that guessing gains nothing: a blind
-## pick among C marks returns 100/C and loses (C-1)/C of the cost, and those
-## cancel exactly at 100/(C-1). A flat cost would make the best strategy on a
-## three mark board to keep pressing
+## What a solved board is worth. `miss_cost` comes off the number of marks so
+## that guessing gains nothing: a blind pick among C returns 100/C and loses
+## (C-1)/C of the cost, which cancel at 100/(C-1)
 const SOLVED := 100
-## What each answer past the first in a row adds, and how far it keeps climbing.
 ## The real cost of a mistake is losing this, not the deduction: a run of ten is
-## worth 250 a board, which dwarfs anything a wrong answer takes off
+## worth 250 a board, well past what a wrong answer takes off
 const CHAIN := 25
 const CHAIN_CAP := 10
 
@@ -31,7 +28,6 @@ var mode := "main"
 ## which ladder the level select screen shows, kept apart from `mode` so
 ## backing out of a stage loaded from the editor still lands somewhere sane
 var menu_mode := "hard"
-## which gimmick the tutorial screen explains
 var tutorial_topic := "refract"
 ## index into Difficulty.LEVELS, not into the ladder it belongs to
 var level_index := 0
@@ -51,16 +47,14 @@ var board: UnityroomClient
 var board_no := 1
 ## the highest total the board has confirmed, so the same one is not posted twice
 var posted := 0
-## the highest total handed over and not yet answered for. Kept apart from
-## `posted` because a request can fail, and a total counted as sent when it was
-## not is one nobody ever sees
+## handed over and not yet answered for. Apart from `posted` because a request
+## can fail, and a total counted as sent when it was not is one nobody sees
 var sending := 0
 ## how long to wait before offering a failed total again. Long enough that a
 ## network that is down stays down, short enough to catch a run that ends soon
 const RESEND_WAIT := 12.0
 
 var cleared: Array[bool] = []
-## one flag per tutorial topic, set once it has been read through
 var tutorial_read: Array[bool] = []
 ## set by the test scene so a test run never rewrites the player's progress
 var testing := false
@@ -81,8 +75,7 @@ func _ready() -> void:
 	_open_board()
 
 
-## Release builds with a key in .env post to unityroom's scoreboard. Without one
-## the game plays exactly the same and never sends anything, so a debug run
+## Without a key the game plays the same and sends nothing, so a debug run
 ## cannot put junk on the board
 func _open_board() -> void:
 	if dev_mode:
@@ -173,7 +166,6 @@ func _save() -> void:
 	cfg.save(SAVE_PATH)
 
 
-## A level opens once the one before it in the same ladder has been beaten
 func is_open(index: int) -> bool:
 	var m := Difficulty.mode_of(index)
 	if not mode_open(m):
@@ -207,8 +199,7 @@ func cleared_in(m: String) -> int:
 	return n
 
 
-## Set once a topic has been read to its last page, which is the tutorial's
-## answer to beating a level
+## Set once a topic has been read to its last page
 func mark_read(key: String) -> void:
 	for i in TutorialTopics.LIST.size():
 		if TutorialTopics.LIST[i].key == key and not tutorial_read[i]:
@@ -217,9 +208,8 @@ func mark_read(key: String) -> void:
 			return
 
 
-## Whether a topic that was locked until now has turned up unread, which is what
-## the mark on the tutorial button means. Nothing is new at the start: the topics
-## open from the beginning are not news, they are where the game starts
+## What the mark on the tutorial button means. The topics open from the start
+## are not news, so they do not count
 func tutorial_news() -> bool:
 	for i in TutorialTopics.LIST.size():
 		var topic: Dictionary = TutorialTopics.LIST[i]
@@ -235,8 +225,7 @@ func topic_read(key: String) -> bool:
 	return false
 
 
-## The score rides across stages and modes now, so picking a new one leaves it
-## alone. Only the reset button on the menu, or quitting, clears it
+## The score rides across stages and modes, so picking a new one leaves it alone
 func start(index: int) -> void:
 	mode = Difficulty.mode_of(index)
 	level_index = index

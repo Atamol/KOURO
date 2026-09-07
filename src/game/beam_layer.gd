@@ -18,10 +18,6 @@ func _init() -> void:
 	material = m
 
 
-func _ready() -> void:
-	add_child(Glow.env())
-
-
 func show_path(p_segments: Array, p_exits: Array, p_reads_light := false) -> void:
 	segments = p_segments
 	exits = p_exits

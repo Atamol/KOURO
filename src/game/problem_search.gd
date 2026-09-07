@@ -7,7 +7,6 @@ class_name ProblemSearch
 
 ## how many seeds it may work through before giving up
 var tries := 1
-## the board once one turns up, and the seed that named it
 var found: Dictionary = {}
 var seed_used := 0
 var done := false
@@ -18,9 +17,8 @@ var _rng := RandomNumberGenerator.new()
 var _first := 0
 var _at := 0
 var _placement := 0
-## the layout being shot at, and how many shots it has had. A whole layout can
-## take a tenth of a second, which is long enough to stall the bar it is drawn
-## for, so the search stops between shots rather than between layouts
+## a whole layout can take a tenth of a second, long enough to stall the bar it
+## is drawn for, so the search stops between shots rather than between layouts
 var _layout: Dictionary = {}
 var _shot := 0
 

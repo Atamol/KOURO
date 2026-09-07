@@ -32,7 +32,6 @@ const KNOB := {
 	"spin": {"lo": 42.0, "hi": 104.0, "step": 2.0, "from": 70.0, "drag": ""},
 	"grin": {"lo": -100.0, "hi": 100.0, "step": 5.0, "from": 70.0, "drag": ""},
 }
-## what the last page of each topic offers to swap between
 const MEDIA := {
 	"refract": ["water", "soda_glass", "diamond"],
 	"critical": ["soda_glass", "diamond", "gallium_phosphide"],
@@ -314,15 +313,10 @@ func _draw() -> void:
 			_draw_refract()
 
 
-## The board the rules are explained on: two mirrors and nothing else, placed so
-## the light comes down the left, crosses on the diagonal and goes down the
-## right, drawing an N. Both mirrors sit at the same angle, which is what makes
-## the two uprights parallel.
-##
-## Placed by hand rather than generated. The first board anybody sees should be
-## readable at a glance, and a shape the eye already knows beats a fair but
-## arbitrary one. It is drawn shrunk to fit the tutorial's frame, at the same
-## scale both ways so no angle is a lie
+## Two mirrors at the same angle, so the light draws an N. Placed by hand rather
+## than generated: the first board anybody sees should be readable at a glance,
+## and a shape the eye knows beats a fair but arbitrary one. Drawn shrunk at the
+## same scale both ways, so no angle is a lie
 const RULES_TILT := 0.4783
 const RULES_LEFT := Vector2(400, 496)
 const RULES_RIGHT := Vector2(880, 156)
@@ -436,9 +430,7 @@ func _rules_scene(objects: Array, from: Vector2, dir: Vector2, legs: Array) -> v
 	for obj: SceneObj in objects:
 		FieldDraw.shape(self, obj)
 	for seg: Dictionary in legs:
-		var i: float = seg.intensity
-		draw_line(seg.a, seg.b, Color(0.30, 0.90, 0.45, 0.10 + 0.20 * i), (7.0 + 6.0 * sqrt(i)) / s, true)
-		draw_line(seg.a, seg.b, Color(BEAM, clampf(0.3 + 0.7 * i, 0.0, 1.0)), (1.2 + 1.8 * sqrt(i)) / s, true)
+		FieldDraw.beam(self, seg.a, seg.b, seg.intensity, s)
 	FieldDraw.source(self, from, dir, 0.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
@@ -485,7 +477,6 @@ func _draw_refract() -> void:
 			_draw_live()
 
 
-## What the word means, before any of the wheels turn up: one ray, one surface
 func _draw_bend() -> void:
 	var c := _pivot()
 	var slow: float = OpticsMaterials.TRANSPARENT[SLOW].n
@@ -501,7 +492,6 @@ func _draw_bend() -> void:
 	_note(Vector2(c.x, BOARD.end.y - 26.0), Lang.t("tut.bend"), DIM)
 
 
-## A beam wide enough to have two edges, which is the whole point of the picture
 func _draw_band() -> void:
 	var c := _pivot()
 	var d := Vector2(0.94, 0.34).normalized()
@@ -516,9 +506,8 @@ func _draw_band() -> void:
 	_note(a.lerp(b, 0.14) - perp * 52.0, Lang.t("tut.band"), BEAM)
 
 
-## Entering the slow medium, or leaving it. The slow side stays at the bottom in
-## both, so the only thing that changes between the two pages is the way the beam
-## runs and that is what the pages are about
+## The slow side stays at the bottom on both pages, so the only thing that
+## changes between them is the way the beam runs
 func _draw_crossing(entering: bool) -> void:
 	var c := _pivot()
 	var slow: float = OpticsMaterials.TRANSPARENT[SLOW].n
@@ -617,9 +606,7 @@ func _traced(objects: Array, from: Vector2, dir: Vector2) -> Dictionary:
 	var res := RayTracer.trace(objects, BOARD, from, dir, {"fresnel": false, "min_intensity": 0.01, "max_events": 48})
 	FieldDraw.bodies(self, objects, theme.default_font)
 	for seg: Dictionary in res.segments:
-		var i: float = seg.intensity
-		draw_line(seg.a, seg.b, Color(0.30, 0.90, 0.45, 0.10 + 0.20 * i), 7.0 + 6.0 * sqrt(i), true)
-		draw_line(seg.a, seg.b, Color(BEAM, clampf(0.3 + 0.7 * i, 0.0, 1.0)), 1.2 + 1.8 * sqrt(i), true)
+		FieldDraw.beam(self, seg.a, seg.b, seg.intensity)
 	FieldDraw.source(self, from, dir, 0.0)
 	return res
 
@@ -636,8 +623,6 @@ func _sheet_at(x: float, y: float, phi: float) -> SceneObj:
 			PI * 0.5, PolarizerObj.byte_from_phi(phi))
 
 
-## Unpolarized light has no one plane, a sheet leaves one, and a second sheet
-## across it leaves nothing. The last page turns that second sheet
 func _draw_sheet() -> void:
 	var c := _pivot()
 	if page == 0:
@@ -672,8 +657,6 @@ func _draw_sheet() -> void:
 		_note(Vector2(c.x, BOARD.end.y - 26.0), Lang.t("tut.crossed"), DIM)
 
 
-## The one place two answers come from, so the split itself is the lesson. The
-## axis is what decides it and the last page turns it
 func _draw_crystal() -> void:
 	var c := _pivot()
 	var axis := deg_to_rad(knob) if _live() else deg_to_rad(25.0)
@@ -693,8 +676,8 @@ func _draw_crystal() -> void:
 		_note(Vector2(c.x, BOARD.end.y - 26.0), Lang.t("tut.crystal_two"), DIM)
 
 
-## The plane turns by an amount the path length decides, which is why the last
-## page changes the size of the body rather than an angle
+## Path length decides the turn, which is why the knob here is a size and not
+## an angle
 func _draw_spin() -> void:
 	var c := _pivot()
 	var radius: float = knob if _live() else [70.0, 46.0][page] if page < 2 else 70.0
@@ -715,8 +698,6 @@ func _draw_spin() -> void:
 	live_label.text = Lang.t("tut.spin_live") % [radius * 2.0, turn, through * 100.0]
 
 
-## The one body light curves inside rather than bending at. The last page changes
-## how steeply the index climbs across it
 func _draw_grin() -> void:
 	var c := _pivot()
 	var slope := knob / 100.0 * 0.009
@@ -737,8 +718,6 @@ func _draw_grin() -> void:
 		_note(Vector2(c.x, BOARD.end.y - 26.0), Lang.t("tut.grin_curve"), DIM)
 
 
-## The one surface with nothing behind it, so the only angles on screen are the
-## two the page is about
 func _draw_mirror() -> void:
 	var c := _pivot()
 	var half := BOARD.size.x * 0.42
@@ -794,8 +773,6 @@ func _draw_critical() -> void:
 		_note(Vector2(c.x, BOARD.end.y - 26.0), text, DIM)
 
 
-## Both beams at once, with how much of the light each one carries. The middle
-## page puts a shallow hit beside a steep one, which is the whole lesson
 func _draw_split() -> void:
 	var slow: float = OpticsMaterials.TRANSPARENT[medium if _live() else SLOW].n
 	if page == 1:
@@ -871,11 +848,9 @@ func _beam(a: Vector2, b: Vector2, half_w: float) -> void:
 ## screen draws a dim branch
 func _ray(a: Vector2, b: Vector2, power := 1.0) -> void:
 	var d := (b - a).normalized()
-	var core := Color(BEAM, clampf(0.3 + 0.7 * power, 0.0, 1.0))
-	draw_line(a, b, Color(0.30, 0.90, 0.45, 0.10 + 0.20 * power), 7.0 + 6.0 * sqrt(power), true)
-	draw_line(a, b, core, 1.2 + 1.8 * sqrt(power), true)
+	FieldDraw.beam(self, a, b, power)
 	for turn in [PI * 0.82, -PI * 0.82]:
-		draw_line(b, b + d.rotated(turn) * 15.0, core, 1.2 + 1.8 * sqrt(power), true)
+		FieldDraw.beam(self, b, b + d.rotated(turn) * 15.0, power)
 
 
 ## A wheel at each end of the axle, drawn across the beam

@@ -20,7 +20,7 @@ func _ready() -> void:
 	for m: String in Difficulty.MODES:
 		GameState.menu_mode = m
 		await _shot_scene("ladder_%s" % m, "res://scenes/ladder.tscn")
-	for topic: String in ["rules", "refract", "sheet", "spin"]:
+	for topic: String in ["rules", "refract", "split", "sheet", "spin"]:
 		GameState.tutorial_topic = topic
 		await _shot_scene("tut_%s" % topic, "res://scenes/tutorial.tscn", 3)
 	await _shot_scene("codex", "res://scenes/codex.tscn")

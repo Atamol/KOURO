@@ -1,11 +1,7 @@
 class_name Clip
-## Putting text on the clipboard the rest of the machine can see.
-##
 ## DisplayServer.clipboard_set is the whole story on desktop. On the web it fills
-## Godot's own buffer and nothing else: a page reaches the system clipboard only
-## through the browser's own call, so a code copied in the game could be pasted
-## back into the game and nowhere else, which is most of the point of having a
-## code at all
+## Godot's own buffer and nothing else, so without the browser's own call a code
+## copied in the game pastes back into the game and nowhere else
 
 
 ## Defined rather than run inline, so the text is handed over as an argument and
@@ -77,8 +73,7 @@ static func listen() -> void:
 		JavaScriptBridge.eval(CATCH, true)
 
 
-## Whether a paste should go to the browser rather than to Godot. On while a
-## field is waiting for one, off otherwise
+## Whether a paste should go to the browser rather than to Godot
 static func want_paste(on: bool) -> void:
 	if OS.get_name() != "Web":
 		return

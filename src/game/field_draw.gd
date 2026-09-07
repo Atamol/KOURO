@@ -59,13 +59,15 @@ static func source(ci: CanvasItem, p: Vector2, d: Vector2, hint_len: float) -> v
 	var pts := PackedVector2Array([p + d * 16.0, p - d * 6.0 + perp * 9.0, p - d * 6.0 - perp * 9.0])
 	ci.draw_colored_polygon(pts, Glow.hot(Color(0.55, 1.0, 0.65)))
 	if hint_len > 18.0:
-		ci.draw_line(p + d * 16.0, p + d * hint_len, Color(0.55, 1.0, 0.65, 0.5), 2.0, true)
+		ci.draw_line(p + d * 16.0, p + d * hint_len, Glow.hot(Color(0.55, 1.0, 0.65, 0.5), 0.5), 2.0, true)
 
 
-## Every stretch of beam goes through here, so the piece the player is given and
-## the answer path cannot come out looking like different light
-static func beam(ci: CanvasItem, a: Vector2, b: Vector2) -> void:
-	ci.draw_line(a, b, Glow.hot(Color(0.45, 1.00, 0.55)), 4.0, true)
+## Every stretch of beam goes through here, or the piece the player is given, the
+## answer path and the tutorial figures drift apart. `lit` drops below 1 only in
+## the tutorial, where the share a beam carries is the lesson
+static func beam(ci: CanvasItem, a: Vector2, b: Vector2, lit := 1.0, scale := 1.0) -> void:
+	var col := Color(0.45, 1.00, 0.55, clampf(0.3 + 0.7 * lit, 0.0, 1.0))
+	ci.draw_line(a, b, Glow.hot(col, lit), (1.6 + 2.4 * sqrt(lit)) / scale, true)
 
 
 ## Ticks lie along the bar when the axis is in the plane of the board and across

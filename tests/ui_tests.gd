@@ -145,7 +145,7 @@ func _test_multi_answer() -> void:
 	for i in right.size():
 		pols[game.problem.trace.exits[i].pol] = true
 	check("the answers are the ordinary and extraordinary beams", pols.has("s") and pols.has("p"))
-	# the counters ride across stages now, so what is checked is the change
+	# the counters ride across stages, so what is checked is the change
 	var asked0: int = GameState.asked
 	var correct0: int = GameState.correct
 	if right.size() == 2:

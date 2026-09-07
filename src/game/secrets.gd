@@ -1,18 +1,15 @@
 class_name Secrets
-## Values that must not sit in the repository, read from a .env beside the
-## project file.
+## Read from a .env beside the project file.
 ##
-## This keeps a key out of version control, not out of a build. The game has to
-## hold the signing key to sign with it, so anything here ends up inside the
-## exported pack and can be pulled back out of it. That is true of unityroom's
-## scoreboard whatever engine it is called from
+## This keeps a key out of version control, not out of a build: the game has to
+## hold the signing key to sign with it, so anything here ships inside the pack
+## and can be pulled back out
 
 
 const PATH := "res://.env"
 
 
-## KEY=VALUE a line, # starts a comment. No file means whatever wanted the value
-## simply stays switched off
+## No file means whatever wanted the value stays switched off
 static func read(key: String, fallback := "") -> String:
 	var text := FileAccess.get_file_as_string(PATH)
 	if text.is_empty():

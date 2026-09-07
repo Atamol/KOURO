@@ -10,7 +10,6 @@ const NOT_DONE := "　"
 ## wide enough for the longest hint to sit on one line. A hint that had to wrap
 ## would change the column's width and shift everything each time it appeared
 const WIDE := 720
-## between the name column and the count column
 const GUTTER := 26.0
 ## wide enough for either name the button can carry
 const LANG_W := 110.0
@@ -35,7 +34,6 @@ var score_label: Label
 ## built the first time it is needed, since most visits never ask for it
 var confirm: ConfirmationDialog
 var buttons: Array = []
-## the name and the padlock ride as children so they can be placed by hand
 var names: Array = []
 var counts: Array = []
 var locks: Array = []

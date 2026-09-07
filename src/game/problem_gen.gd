@@ -46,7 +46,6 @@ static func prepare(level: Dictionary) -> Dictionary:
 	return {"edge": edge, "picky": edge.values().max() > 0.0, "opts": opts, "measured": measured}
 
 
-## One layout to shoot at, or nothing when the draw could not place the bodies
 static func lay_out(level: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
 	var objects := _place_objects(level, rng)
 	if objects.is_empty():
@@ -56,8 +55,7 @@ static func lay_out(level: Dictionary, rng: RandomNumberGenerator) -> Dictionary
 
 
 ## One shot at a laid out board, which is the finest grain the search can be
-## stopped on. It draws exactly what one round of the loop used to, so a seed
-## still names the same board
+## stopped on. The draw order is fixed, so a seed still names the same board
 static func shoot(level: Dictionary, rng: RandomNumberGenerator, fixed: Dictionary, layout: Dictionary) -> Dictionary:
 	var edge: Dictionary = fixed.edge
 	var picky: bool = fixed.picky
@@ -166,10 +164,8 @@ static func _reads_polarization(objects: Array, touched: int) -> bool:
 	return _path_sheets(touched, objects) > 0 or _path_has_rotary(touched, objects)
 
 
-## Whether answering takes reading how much light got where. A crystal parts the
-## beam and both halves are asked for, and polarization on the path has already
-## had to earn its place. On every other board the light merely gets dimmer as
-## it goes, which nobody is asked to read, so it is not drawn
+## Whether answering takes reading how much light got where. Elsewhere the light
+## merely gets dimmer as it goes, which nobody is asked to read
 static func _reads_light(objects: Array, touched: int, wins: Array) -> bool:
 	return wins.size() > 1 or _reads_polarization(objects, touched)
 
@@ -184,9 +180,8 @@ static func attempt(level: Dictionary, rng: RandomNumberGenerator, fixed: Dictio
 			return made
 	return {}
 
-## Drops bodies no reading of the board ever sends light near, since all they do
-## is clutter it. A dropped body was never hit, but the exits index into the
-## object list, so their masks are rewritten to match
+## Drops bodies no reading of the board ever sends light near. The exits index
+## into the object list, so their masks are rewritten to match
 static func _drop_dark(objects: Array, exits: Array, lit: int) -> Array:
 	var kept: Array = []
 	var map: Array = []
@@ -201,10 +196,9 @@ static func _drop_dark(objects: Array, exits: Array, lit: int) -> Array:
 	return kept
 
 
-## The ways a board can come down to eyesight rather than to optics: a hit that
-## lands on a corner, a first hit that may or may not happen at all, a beam that
-## skims a body it never meets, a mirror taken nearly edge on, and a sheet met so
-## far off its normal that its angle stops meaning what it says
+## The ways a board comes down to eyesight rather than optics: a hit on a corner,
+## a first hit that may not happen at all, a skim, a mirror taken edge on, and a
+## sheet met so far off its normal that its angle stops meaning what it says
 static func _edges(level: Dictionary) -> Dictionary:
 	return {
 		"clear": level.get("min_clear", 0.0),
@@ -229,9 +223,8 @@ static func _too_marginal(exits: Array, answers: int, edge: Dictionary) -> bool:
 
 
 ## Nudges the shot both ways and asks whether the answer stayed put. Every other
-## test looks at one moment of the path; this one asks whether the whole chain
-## amplified, which is what a long path through a gradient or a near critical
-## surface does
+## test looks at one moment of the path, this one at whether the whole chain
+## amplified, which is what a gradient or a near critical surface does
 static func _steady(objects: Array, src: Dictionary, wins: Array, opts: Dictionary, limit: float) -> bool:
 	if limit <= 0.0:
 		return true
@@ -304,11 +297,9 @@ static func _place_objects(level: Dictionary, rng: RandomNumberGenerator) -> Arr
 	return objects
 
 
-## A crystal parts the beam wherever it sits, which is a different question with
-## a different number of answers, so the levels that are not about it never draw
+## A crystal parts the beam wherever it sits, so a level not about it never draws
 ## one rather than throwing the board away once the split shows up. Sheets and
-## rotary bodies are kept out the same way, since drawn at random neither can
-## reach the answer and every board holding one would be thrown away again
+## rotary bodies likewise: drawn at random neither can reach the answer
 static func _drawable(level: Dictionary) -> Dictionary:
 	var out := level
 	if not _places(level, "polarizer") and (level.kinds as Array).has("polarizer"):
@@ -335,11 +326,9 @@ static func _places(level: Dictionary, kind: String) -> bool:
 	return (level.require_kinds as Array).has(kind) or (level.get("place_kinds", []) as Array).has(kind)
 
 
-## A line to lay the two sheets and the liquid along, each bar turned across it.
-## Dropped independently they almost never leave one beam a way through all three.
-##
-## Only for the rotation level: a pair whose point is that it stops the light
-## wants them apart, not in a row
+## A line to lay the two sheets and the liquid along, since dropped independently
+## they almost never leave one beam a way through all three. Only for the rotation
+## level: a pair whose point is that it stops the light wants them apart
 static func _lane(level: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
 	if level.get("place_rotary", 0) < 1:
 		return {}
@@ -373,11 +362,9 @@ static func _step_sheets(objects: Array, step: float) -> void:
 		(sheets[i] as PolarizerObj).phi = fposmod((sheets[0] as PolarizerObj).phi + step * i, PI)
 
 
-## The same for mirrors, except that a mirror carries no angle of its own: it is
-## the segment, so the segment is turned about its middle. Turning one moves it,
-## unlike setting a sheet's axis, so a layout that fitted before can come out with
-## two bodies inside each other. Rather than nudge them apart the whole layout
-## goes back, since the tracer cannot read an overlap
+## The same for mirrors, except a mirror is the segment, so it turns about its
+## middle and moves. A layout that fitted before can come out with two bodies
+## inside each other, and the whole layout goes back rather than being nudged
 static func _step_mirrors(objects: Array, step: float) -> bool:
 	var mirrors: Array = []
 	for o: SceneObj in objects:
@@ -435,10 +422,8 @@ static func _make_special(pool: String, level: Dictionary, rng: RandomNumberGene
 	if keys.is_empty():
 		return null
 	var key: String = _pick(keys, rng)
-	# rotation goes by path length, so these are built large: easier to thread a
-	# beam through and worth more degrees once threaded. Sizing them from the
-	# material instead, so that a crossing turns the plane about a quarter, reads
-	# better on paper and finds a third as many boards
+	# rotation goes by path length, so these are built large. Sizing them from the
+	# material instead reads better on paper and finds a third as many boards
 	if pool == "rotary":
 		if rng.randf() < 0.5:
 			var r := rng.randf_range(68.0, 85.0)
@@ -450,8 +435,8 @@ static func _make_special(pool: String, level: Dictionary, rng: RandomNumberGene
 	return _make_object(kind, {"materials": [key], "metals": level.metals}, rng)
 
 
-## Editor bounds for each shape, also what the generator draws from. s2 is only
-## meaningful for the two rectangular shapes
+## Editor bounds, also what the generator draws from. s2 means nothing outside
+## the two rectangular shapes
 const SIZE_RANGE := {
 	"mirror": {"s1": [40.0, 160.0], "s2": [0.0, 0.0]},
 	"slab": {"s1": [100.0, 300.0], "s2": [30.0, 120.0]},

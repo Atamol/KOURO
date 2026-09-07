@@ -74,8 +74,7 @@ func _build_hud() -> void:
 	hud = Label.new()
 	hud.position = Vector2(150, 16)
 	ui.add_child(hud)
-	# on its own line: side by side, the longest stage name ran under the seed and
-	# its buttons, and the three readings ran into each other
+	# on its own line: side by side, the longest stage name ran under the seed
 	stats = Label.new()
 	stats.position = Vector2(150, 44)
 	stats.add_theme_font_size_override("font_size", 15)
@@ -125,14 +124,11 @@ func _build_memo_controls() -> void:
 	memo_row.custom_minimum_size = Vector2(980, 0)
 	memo_row.add_theme_constant_override("separation", 0)
 	ui.add_child(memo_row)
-	# both ends are the same width, so the prompt between them stays centred on
-	# the frame rather than on what is left over
 	var help := HBoxContainer.new()
 	help.custom_minimum_size = Vector2(SIDE, 92)
 	help.add_theme_constant_override("separation", 8)
 	memo_row.add_child(help)
-	# two columns rather than one block of text, so what each one does starts at
-	# the same place on every line instead of wherever the key name ran out
+	# two columns, or what each key does would start wherever its name ran out
 	for col: String in [Lang.t("game.memo_keys"), Lang.t("game.memo_acts")]:
 		var side := Label.new()
 		side.text = col
@@ -158,8 +154,7 @@ func _build_memo_controls() -> void:
 	right.add_child(wipe)
 
 
-## Sits in the middle of the empty frame while the worker searches. Nothing else
-## is on screen then, so it does not have to fight for room
+## Sits in the middle of the empty frame while the worker searches
 func _build_loading() -> void:
 	loading = PanelContainer.new()
 	loading.visible = false
@@ -212,8 +207,7 @@ func _build_result_bar() -> void:
 	result_label = Label.new()
 	result_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	result_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	# a long verdict must not widen the bar past the frame, so it wraps into the
-	# room it is given
+	# a long verdict wraps rather than widening the bar past the frame
 	result_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	result_label.custom_minimum_size = Vector2(300, 0)
 	hb.add_child(result_label)
@@ -343,11 +337,9 @@ func _next_problem() -> void:
 
 
 ## Rejection sampling takes seconds on the last stages, so the search runs on a
-## worker and _process picks the board up when it lands. A shared layout is
-## already written down and needs no search.
-##
-## The single threaded web export has no worker to hand it to, so there _process
-## drives the same search a slice at a time and the panel keeps animating
+## worker and _process picks the board up when it lands. The web export has no
+## worker to hand it to, so there _process drives the same search a slice at a
+## time and the panel keeps animating
 func _start_build() -> void:
 	_join()
 	var from := 0

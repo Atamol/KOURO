@@ -1,10 +1,8 @@
 class_name UiTheme
-## The fonts are carried in the project rather than looked up by name. A Web
-## build has no OS font list for SystemFont to search, so every name misses and
-## the text comes out as tofu.
-##
-## Inter is asked first and M PLUS 1p catches what it has no glyph for,
-## which in practice means Latin from one and Japanese from the other
+## Carried in the project rather than looked up by name: a Web build has no OS
+## font list for SystemFont to search, so every name misses and the text comes
+## out as tofu. Inter is asked first and M PLUS 1p catches what it has no glyph
+## for, which in practice means Latin from one and Japanese from the other
 
 
 const LATIN := "res://assets/fonts/Inter.ttf"

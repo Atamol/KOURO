@@ -7,7 +7,7 @@ extends Control
 ## spoiler, it is the table a player is meant to reason from
 
 
-## the frame the pictures are drawn in, to the right of the list
+## the frame the pictures are drawn in
 const BOARD := Rect2(430, 90, 700, 270)
 const BEAM := Color(0.45, 1.00, 0.55)
 const AXLE := Color(1.0, 0.86, 0.52)
@@ -419,9 +419,7 @@ func _traced(objects: Array, from: Vector2, dir: Vector2) -> Dictionary:
 	for obj: SceneObj in objects:
 		FieldDraw.shape(self, obj)
 	for seg: Dictionary in res.segments:
-		var i: float = seg.intensity
-		draw_line(seg.a, seg.b, Color(0.30, 0.90, 0.45, 0.10 + 0.20 * i), 7.0 + 6.0 * sqrt(i), true)
-		draw_line(seg.a, seg.b, Color(BEAM, clampf(0.3 + 0.7 * i, 0.0, 1.0)), 1.2 + 1.8 * sqrt(i), true)
+		FieldDraw.beam(self, seg.a, seg.b, seg.intensity)
 	FieldDraw.source(self, from, dir, 0.0)
 	return res
 

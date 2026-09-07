@@ -18,10 +18,8 @@ const AXES := [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165]
 ## index slopes offered for a graded block, as a share of what it can carry
 const SLOPES := [-1.0, -0.75, -0.5, -0.25, 0.25, 0.5, 0.75, 1.0]
 const HANDLE_R := 11.0
-## how close to a source handle a click has to be to grab it, and how much room
-## around one is kept clear of hand placed decoys. Both handles sit on the
-## border, which is exactly where decoys go, so without this the click that was
-## meant for the source drops a marker instead
+## both handles sit on the border, which is exactly where decoys go, so without
+## this the click meant for the source drops a marker instead
 const HANDLE_GRAB := 18.0
 const SOURCE_KEEPOUT := 40.0
 const PICK_SLACK := 6.0
@@ -68,7 +66,6 @@ var code_edit: LineEdit
 ## whether the browser is currently being handed Ctrl+V instead of Godot
 var wants_paste := false
 var mat_picker: OptionButton
-## transmission axis for a sheet, index slope for a graded block
 var extra_picker: OptionButton
 var delete_btn: Button
 var fresnel_box: CheckBox
@@ -933,7 +930,7 @@ func _draw() -> void:
 		draw_circle(at, 15.0, Color(0.08, 0.10, 0.14, 0.85))
 		draw_circle(at, 15.0, Color(1, 1, 1, 0.95) if chosen else Color(0.72, 0.82, 1.0, 0.7), false, 2.0, true)
 	for p: Vector2 in truth:
-		draw_circle(p, 17.0, Color(0.5, 1.0, 0.6, 0.9), false, 3.0, true)
+		draw_circle(p, 17.0, Glow.hot(Color(0.5, 1.0, 0.6, 0.9)), false, 3.0, true)
 	if preview.is_empty():
 		return
 	for i in preview.choices.size():
