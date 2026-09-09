@@ -1,5 +1,7 @@
 # KOURO
 
+My original browser game.
+
 ## Playable Here ↓
 
 - [Itch.io](https://atamol.itch.io/kouro)
