@@ -2,7 +2,7 @@
 
 ## Playable Here ↓
 
-- [Itch.io](https://unityroom.com/games/kouro)
+- [Itch.io](https://atamol.itch.io/kouro)
 - [Unityroom](https://unityroom.com/games/kouro)
 
 ## License
